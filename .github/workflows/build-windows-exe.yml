@@ -24,6 +24,8 @@ jobs:
           pip install pyinstaller
 
       - name: Build HR Enterprise.exe
+        id: build
+        continue-on-error: true
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed `
             --name "HR Enterprise" `
@@ -32,10 +34,31 @@ jobs:
             --collect-all reportlab `
             --add-data "fonts;fonts" `
             --add-data "data;data" `
-            server.py
+            server.py *> build_log.txt
+          "EXITCODE=$LASTEXITCODE" | Out-File -Append build_log.txt
+          Get-Content build_log.txt
+
+      - name: Publish build log to repo (for debugging)
+        if: always()
+        shell: bash
+        run: |
+          git config user.email "ci@hr-enterprise.local"
+          git config user.name "HR Enterprise CI"
+          rm -rf /tmp/logrepo
+          git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git /tmp/logrepo
+          cd /tmp/logrepo
+          git checkout -B ci-logs
+          cp "$GITHUB_WORKSPACE/build_log.txt" ./build_log.txt || echo "no log file" > build_log.txt
+          git add build_log.txt
+          git commit -m "CI build log [skip ci]" || echo "nothing to commit"
+          git push -f origin ci-logs
 
       - name: Verify build output
         run: |
+          if ("${{ steps.build.outcome }}" -ne "success") {
+            Write-Error "PyInstaller build step failed. See ci-logs branch / build_log.txt"
+            exit 1
+          }
           if (!(Test-Path "dist\HR Enterprise.exe")) {
             Write-Error "Build failed: dist\HR Enterprise.exe was not created"
             exit 1
