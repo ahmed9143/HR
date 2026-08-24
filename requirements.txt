@@ -1,0 +1,8 @@
+openpyxl>=3.1
+reportlab>=4.0
+pyinstaller>=6.0
+pywin32>=306; platform_system=="Windows"
+pystray>=0.19.5
+Pillow>=10.0
+
+psycopg[binary]>=3.2
