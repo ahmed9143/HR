@@ -41,21 +41,47 @@ jobs:
           "EXITCODE=$LASTEXITCODE" | Out-File -Append build_log.txt
           Get-Content build_log.txt
 
-      - name: Publish build log to repo (for debugging)
+      - name: Publish build log to Issue #1 (for debugging)
         if: always()
         continue-on-error: true
         shell: bash
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.email "ci@hr-enterprise.local"
-          git config user.name "HR Enterprise CI"
-          rm -rf /tmp/logrepo
-          git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git /tmp/logrepo
-          cd /tmp/logrepo
-          git checkout -B ci-logs
-          cp "$GITHUB_WORKSPACE/build_log.txt" ./build_log.txt || echo "no log file" > build_log.txt
-          git add build_log.txt
-          git commit -m "CI build log [skip ci]" || echo "nothing to commit"
-          git push -f origin ci-logs
+          cat > /tmp/make_body.py << 'PYEOF'
+import json, os, sys
+
+log_path = "build_log.txt"
+if os.path.exists(log_path):
+    with open(log_path, "r", errors="replace") as f:
+        log = f.read()[-60000:]
+else:
+    log = "(no build_log.txt file was produced)"
+
+run_url = os.environ["RUN_URL"]
+commit = os.environ["COMMIT_SHA"][:7]
+text = "### Build attempt for commit {}\n\nRun: {}\n\n```\n{}\n```".format(commit, run_url, log)
+with open("/tmp/comment_body.json", "w") as f:
+    json.dump({"body": text}, f)
+PYEOF
+          python3 /tmp/make_body.py
+          curl -s -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/issues/1/comments" \
+            -d @/tmp/comment_body.json
+
+      - name: Always upload build log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_log.txt
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Verify build output
         run: |
