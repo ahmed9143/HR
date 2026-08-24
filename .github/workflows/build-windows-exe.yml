@@ -26,9 +26,18 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # Non-blocking: run whatever test scripts exist, but never let a test
+      # failure stop the EXE build. This is smoke coverage, not a gate.
+      - name: Run test suite (non-blocking)
+        continue-on-error: true
+        run: |
+          Get-ChildItem -Filter "TEST_*.py" | ForEach-Object {
+            Write-Host "Running $($_.Name)..."
+            python $_.FullName
+          }
+
       - name: Build HR Enterprise.exe
         id: build
-        continue-on-error: true
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed `
             --name "HR Enterprise" `
@@ -40,61 +49,36 @@ jobs:
             server.py *> build_log.txt
           "EXITCODE=$LASTEXITCODE" | Out-File -Append build_log.txt
           Get-Content build_log.txt
-
-      - name: Publish build log to Issue #1 (for debugging)
-        if: always()
-        continue-on-error: true
-        shell: bash
-        env:
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          COMMIT_SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cat > /tmp/make_body.py << 'PYEOF'
-import json, os, sys
-
-log_path = "build_log.txt"
-if os.path.exists(log_path):
-    with open(log_path, "r", errors="replace") as f:
-        log = f.read()[-60000:]
-else:
-    log = "(no build_log.txt file was produced)"
-
-run_url = os.environ["RUN_URL"]
-commit = os.environ["COMMIT_SHA"][:7]
-text = "### Build attempt for commit {}\n\nRun: {}\n\n```\n{}\n```".format(commit, run_url, log)
-with open("/tmp/comment_body.json", "w") as f:
-    json.dump({"body": text}, f)
-PYEOF
-          python3 /tmp/make_body.py
-          curl -s -X POST \
-            -H "Authorization: token ${GH_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "https://api.github.com/repos/${REPO}/issues/1/comments" \
-            -d @/tmp/comment_body.json
-
-      - name: Always upload build log as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build_log.txt
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Verify build output
-        run: |
-          if ("${{ steps.build.outcome }}" -ne "success") {
-            Write-Error "PyInstaller build step failed. See ci-logs branch / build_log.txt"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "PyInstaller exited with code $LASTEXITCODE"
             exit 1
           }
+
+      - name: Verify build output
+        id: verify
+        run: |
           if (!(Test-Path "dist\HR Enterprise.exe")) {
             Write-Error "Build failed: dist\HR Enterprise.exe was not created"
             exit 1
           }
           Write-Host "Build succeeded:"
           Get-Item "dist\HR Enterprise.exe" | Format-List
+
+      # Smoke-launch the EXE headlessly to make sure it actually starts
+      # (catches missing hidden imports / packaging errors that PyInstaller
+      # itself won't flag). Non-blocking so a UI-detection quirk doesn't
+      # kill an otherwise good build; the log is uploaded either way.
+      - name: Smoke test EXE launch
+        continue-on-error: true
+        run: |
+          $proc = Start-Process -FilePath "dist\HR Enterprise.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Warning "EXE exited on its own within 8s (exit code $($proc.ExitCode)) - check for startup errors."
+          } else {
+            Write-Host "EXE is running (PID $($proc.Id)) after 8s - looks alive."
+            Stop-Process -Id $proc.Id -Force
+          }
 
       - name: Upload EXE as build artifact
         uses: actions/upload-artifact@v4
@@ -113,3 +97,53 @@ PYEOF
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Everything below this line is optional diagnostics only. ----
+      # It runs after the EXE is already built, verified, uploaded, and
+      # released, and can never block or undo any of the above.
+
+      - name: Always upload build log as artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_log.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish build log to Issue #1 (best-effort debugging aid)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > /tmp/make_body.py << 'PYEOF'
+import json, os
+
+log_path = "build_log.txt"
+if os.path.exists(log_path):
+    with open(log_path, "r", errors="replace") as f:
+        log = f.read()[-60000:]
+else:
+    log = "(no build_log.txt file was produced)"
+
+run_url = os.environ["RUN_URL"]
+commit = os.environ["COMMIT_SHA"][:7]
+text = "### Build attempt for commit {}\n\nRun: {}\n\n```\n{}\n```".format(commit, run_url, log)
+with open("/tmp/comment_body.json", "w") as f:
+    json.dump({"body": text}, f)
+PYEOF
+          python3 /tmp/make_body.py
+          # Best-effort only: if issue #1 doesn't exist or Issues are
+          # disabled, this 404s and is silently ignored (continue-on-error
+          # above already guarantees the job doesn't fail either way).
+          curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/issues/1/comments" \
+            -d @/tmp/comment_body.json || true
