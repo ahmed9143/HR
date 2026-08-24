@@ -1,149 +1,136 @@
-name: Build HR Enterprise.exe (Windows)
+name: Build HR Enterprise Windows EXE
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch: {}
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build HR Enterprise.exe
     runs-on: windows-latest
+
     steps:
-      - name: Checkout code
+
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          if (Test-Path "requirements.txt") {
+            python -m pip install -r requirements.txt
+          }
+          python -m pip install pyinstaller
 
-      # Non-blocking: run whatever test scripts exist, but never let a test
-      # failure stop the EXE build. This is smoke coverage, not a gate.
-      - name: Run test suite (non-blocking)
+      - name: Run tests
+        shell: powershell
         continue-on-error: true
         run: |
-          Get-ChildItem -Filter "TEST_*.py" | ForEach-Object {
-            Write-Host "Running $($_.Name)..."
-            python $_.FullName
+          $tests = Get-ChildItem -Filter "TEST_*.py" -ErrorAction SilentlyContinue
+
+          foreach ($test in $tests) {
+            Write-Host "Running $($test.Name)"
+            python $test.FullName
           }
 
       - name: Build HR Enterprise.exe
-        id: build
+        shell: powershell
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
             --name "HR Enterprise" `
             --hidden-import win32clipboard `
             --hidden-import win32con `
             --collect-all reportlab `
             --add-data "fonts;fonts" `
             --add-data "data;data" `
-            server.py *> build_log.txt
-          "EXITCODE=$LASTEXITCODE" | Out-File -Append build_log.txt
-          Get-Content build_log.txt
+            server.py
+
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "PyInstaller exited with code $LASTEXITCODE"
+            Write-Error "PyInstaller failed with exit code $LASTEXITCODE"
             exit 1
           }
 
-      - name: Verify build output
-        id: verify
+      - name: Verify EXE
+        shell: powershell
         run: |
-          if (!(Test-Path "dist\HR Enterprise.exe")) {
-            Write-Error "Build failed: dist\HR Enterprise.exe was not created"
+          $exe = "dist\HR Enterprise.exe"
+
+          if (!(Test-Path $exe)) {
+            Write-Error "HR Enterprise.exe was not created."
             exit 1
           }
-          Write-Host "Build succeeded:"
-          Get-Item "dist\HR Enterprise.exe" | Format-List
 
-      # Smoke-launch the EXE headlessly to make sure it actually starts
-      # (catches missing hidden imports / packaging errors that PyInstaller
-      # itself won't flag). Non-blocking so a UI-detection quirk doesn't
-      # kill an otherwise good build; the log is uploaded either way.
-      - name: Smoke test EXE launch
+          $file = Get-Item $exe
+
+          Write-Host "===================================="
+          Write-Host "BUILD SUCCESSFUL"
+          Write-Host "File: $($file.FullName)"
+          Write-Host "Size: $($file.Length) bytes"
+          Write-Host "===================================="
+
+      - name: Smoke test EXE
+        shell: powershell
         continue-on-error: true
         run: |
-          $proc = Start-Process -FilePath "dist\HR Enterprise.exe" -PassThru
-          Start-Sleep -Seconds 8
-          if ($proc.HasExited) {
-            Write-Warning "EXE exited on its own within 8s (exit code $($proc.ExitCode)) - check for startup errors."
-          } else {
-            Write-Host "EXE is running (PID $($proc.Id)) after 8s - looks alive."
-            Stop-Process -Id $proc.Id -Force
+          $exe = Resolve-Path "dist\HR Enterprise.exe"
+
+          Write-Host "Starting HR Enterprise.exe..."
+
+          $process = Start-Process `
+            -FilePath $exe `
+            -PassThru
+
+          Start-Sleep -Seconds 10
+
+          if ($process.HasExited) {
+            Write-Warning "EXE exited during smoke test."
+            Write-Warning "Exit code: $($process.ExitCode)"
+          }
+          else {
+            Write-Host "HR Enterprise.exe is running successfully."
+            Write-Host "PID: $($process.Id)"
+
+            Stop-Process `
+              -Id $process.Id `
+              -Force `
+              -ErrorAction SilentlyContinue
           }
 
-      - name: Upload EXE as build artifact
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: HR-Enterprise-Windows
-          path: dist/HR Enterprise.exe
+          path: "dist/HR Enterprise.exe"
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Create/refresh latest Release with the EXE
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest-build
           name: HR Enterprise - Latest Build
-          body: "Automated Windows build of HR Enterprise. Download HR Enterprise.exe below and double-click to run."
-          files: dist/HR Enterprise.exe
           prerelease: true
+          body: |
+            HR Enterprise Windows build.
+
+            Download:
+            HR Enterprise.exe
+          files: "dist/HR Enterprise.exe"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ---- Everything below this line is optional diagnostics only. ----
-      # It runs after the EXE is already built, verified, uploaded, and
-      # released, and can never block or undo any of the above.
-
-      - name: Always upload build log as artifact
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build_log.txt
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Publish build log to Issue #1 (best-effort debugging aid)
-        if: always()
-        continue-on-error: true
-        shell: bash
-        env:
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          COMMIT_SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cat > /tmp/make_body.py << 'PYEOF'
-import json, os
-
-log_path = "build_log.txt"
-if os.path.exists(log_path):
-    with open(log_path, "r", errors="replace") as f:
-        log = f.read()[-60000:]
-else:
-    log = "(no build_log.txt file was produced)"
-
-run_url = os.environ["RUN_URL"]
-commit = os.environ["COMMIT_SHA"][:7]
-text = "### Build attempt for commit {}\n\nRun: {}\n\n```\n{}\n```".format(commit, run_url, log)
-with open("/tmp/comment_body.json", "w") as f:
-    json.dump({"body": text}, f)
-PYEOF
-          python3 /tmp/make_body.py
-          # Best-effort only: if issue #1 doesn't exist or Issues are
-          # disabled, this 404s and is silently ignored (continue-on-error
-          # above already guarantees the job doesn't fail either way).
-          curl -s -o /dev/null -w "%{http_code}" -X POST \
-            -H "Authorization: token ${GH_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "https://api.github.com/repos/${REPO}/issues/1/comments" \
-            -d @/tmp/comment_body.json || true
