@@ -11,8 +11,8 @@ def install_v11(g):
     def ensure_schema():
         c=db();
         stmts=[
-        "CREATE TABLE IF NOT EXISTS saved_views(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,user_name TEXT,entity TEXT,filters_json TEXT,created_at TEXT,updated_at TEXT)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS ux_saved_views_user_name ON saved_views(user_name,name,entity)",
+        "CREATE TABLE IF NOT EXISTS saved_views_v11(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,user_name TEXT,entity TEXT,filters_json TEXT,created_at TEXT,updated_at TEXT)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_saved_views_v11_user_name ON saved_views_v11(user_name,name,entity)",
         "CREATE TABLE IF NOT EXISTS workflow_transitions(id INTEGER PRIMARY KEY AUTOINCREMENT,request_id INTEGER,from_status TEXT,to_status TEXT,actor TEXT,comment TEXT,created_at TEXT)",
         "CREATE TABLE IF NOT EXISTS notification_actions(id INTEGER PRIMARY KEY AUTOINCREMENT,notification_id INTEGER,action TEXT,actor TEXT,created_at TEXT)",
         "CREATE TABLE IF NOT EXISTS device_admin_events(id INTEGER PRIMARY KEY AUTOINCREMENT,device_id TEXT,action TEXT,actor TEXT,created_at TEXT,details TEXT)",
@@ -117,15 +117,15 @@ def install_v11(g):
         c.execute('UPDATE employee_requests SET status=?,updated_at=? WHERE id=?',(new,now(),rid)); c.execute('INSERT INTO workflow_transitions(request_id,from_status,to_status,actor,comment,created_at) VALUES(?,?,?,?,?,?)',(rid,old,new,u['username'],comment,now())); c.execute('INSERT INTO workflow_comments(request_id,user_name,comment,created_at) VALUES(?,?,?,?)',(rid,u['username'],comment,now())); c.commit(); c.close(); audit(u['username'],u['role'],'Workflow transition','Request',str(rid),f'{old}->{new}'); H.redirect('/v11/workflow')
 
     def saved_views(u):
-        c=db(); rows=c.execute('SELECT * FROM saved_views WHERE user_name=? ORDER BY id DESC',(u['username'],)).fetchall(); c.close(); trs=''.join(f'<tr><td>{esc(r["name"])}</td><td>{esc(r["entity"])}</td><td>{esc(r["filters_json"])}</td><td><form method="post" action="/v11/views/delete">{csrf_field(u)}<input type="hidden" name="id" value="{r["id"]}"><button class="btn bad">Delete</button></form></td></tr>' for r in rows)
+        c=db(); rows=c.execute('SELECT * FROM saved_views_v11 WHERE user_name=? ORDER BY id DESC',(u['username'],)).fetchall(); c.close(); trs=''.join(f'<tr><td>{esc(r["name"])}</td><td>{esc(r["entity"])}</td><td>{esc(r["filters_json"])}</td><td><form method="post" action="/v11/views/delete">{csrf_field(u)}<input type="hidden" name="id" value="{r["id"]}"><button class="btn bad">Delete</button></form></td></tr>' for r in rows)
         body=f'<div class="top"><div class="title"><h1>🔎 Saved Views</h1><p>Save useful HR filters instead of rebuilding them every time.</p></div></div><div class="card"><form method="post" action="/v11/views/save">{csrf_field(u)}<div class="form"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Entity</label><select name="entity"><option>employees</option><option>requests</option><option>alerts</option></select></div><div class="field full"><label>Filters JSON</label><textarea name="filters" required placeholder="{{&quot;department&quot;:&quot;Nursing&quot;,&quot;status&quot;:&quot;active&quot;}}"></textarea></div></div><button class="btn">Save View</button></form></div><div class="card" style="margin-top:12px"><table class="table"><tr><th>Name</th><th>Entity</th><th>Filters</th><th></th></tr>{trs or "<tr><td colspan=4>No saved views</td></tr>"}</table></div>'
         H.send(page('Saved Views',body,u,'employees'))
     def saved_view_save(u,f):
         try: json.loads(f.get('filters','{}'))
         except Exception: return H.send(page('Saved Views','<div class="card"><div class="alert">Invalid filters JSON.</div></div>',u),400)
-        c=db(); c.execute('INSERT OR REPLACE INTO saved_views(name,user_name,entity,filters_json,created_at,updated_at) VALUES(?,?,?,?,?,?)',(f.get('name','').strip(),u['username'],f.get('entity','employees'),f.get('filters','{}'),now(),now())); c.commit(); c.close(); H.redirect('/v11/views')
+        c=db(); c.execute('INSERT OR REPLACE INTO saved_views_v11(name,user_name,entity,filters_json,created_at,updated_at) VALUES(?,?,?,?,?,?)',(f.get('name','').strip(),u['username'],f.get('entity','employees'),f.get('filters','{}'),now(),now())); c.commit(); c.close(); H.redirect('/v11/views')
     def saved_view_delete(u,f):
-        c=db(); c.execute('DELETE FROM saved_views WHERE id=? AND user_name=?',(f.get('id'),u['username'])); c.commit(); c.close(); H.redirect('/v11/views')
+        c=db(); c.execute('DELETE FROM saved_views_v11 WHERE id=? AND user_name=?',(f.get('id'),u['username'])); c.commit(); c.close(); H.redirect('/v11/views')
 
     def global_search(u):
         q=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('q',[''])[0].strip()
