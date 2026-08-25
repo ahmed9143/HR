@@ -138,7 +138,11 @@ def install_v11(g):
     old_get, old_post = H.do_GET, H.do_POST
     H.excel_v11=v11_excel; H.mapping_v11=mapping; H.mapping_save_v11=mapping_save; H.intelligence_v11=intelligence; H.notification_action_v11=notification_action; H.devices_v11=devices; H.device_action_v11=device_action; H.workflow_v11=workflow; H.workflow_transition_v11=workflow_transition; H.saved_views_v11=saved_views; H.saved_view_save_v11=saved_view_save; H.saved_view_delete_v11=saved_view_delete; H.global_search_v11=global_search
     def get(self):
-        p=urllib.parse.urlparse(self.path).path; u=self.require()
+        p=urllib.parse.urlparse(self.path).path
+        v11_paths=('/v11/excel','/v11/mapping','/v11/intelligence','/v11/devices','/v11/workflow','/v11/views','/v11/search')
+        if p not in v11_paths:
+            return old_get(self)
+        u=self.require()
         if not u:return
         if p=='/v11/excel': return self.excel_v11(u)
         if p=='/v11/mapping': return self.mapping_v11(u)
@@ -149,10 +153,14 @@ def install_v11(g):
         if p=='/v11/search': return self.global_search_v11(u)
         return old_get(self)
     def post(self):
-        p=urllib.parse.urlparse(self.path).path; u=self.require()
+        p=urllib.parse.urlparse(self.path).path
+        v11_paths=('/v11/mapping/save','/v11/notification/action','/v11/device/action','/v11/workflow/transition','/v11/views/save','/v11/views/delete')
+        if p not in v11_paths:
+            return old_post(self)
+        u=self.require()
         if not u:return
         f=self.form()
-        if p.startswith('/v11/') and f.get('_csrf')!=u.get('csrf'): return self.send(page('Security','<div class="card"><div class="alert">Invalid CSRF.</div></div>',u),403)
+        if f.get('_csrf')!=u.get('csrf'): return self.send(page('Security','<div class="card"><div class="alert">Invalid CSRF.</div></div>',u),403)
         if p=='/v11/mapping/save': return self.mapping_save_v11(u,f)
         if p=='/v11/notification/action': return self.notification_action_v11(u,f)
         if p=='/v11/device/action': return self.device_action_v11(u,f)

@@ -198,8 +198,12 @@ document.getElementById('undo').onclick=()=>{if(undoStack.length){redoStack.push
     H.v10_excel_grid=v10_excel_grid; H.v10_intelligence=v10_intelligence; H.v10_rules=v10_rules; H.v10_rule_save=v10_rule_save; H.v10_matching=v10_matching; H.v10_match_decision=v10_match_decision; H.v10_match_safe=v10_match_safe; H.v10_myhr=v10_myhr; H.v10_request_action=v10_request_action; H.v10_devices=v10_devices; H.v10_payslip=v10_payslip; H.v10_bulk=v10_bulk
     old_get=H.do_GET; old_post=H.do_POST
     def get(self):
-        p=urlparse(self.path).path; u=self.require()
-        if p.startswith('/v10/') and not u:return
+        p=urlparse(self.path).path
+        v10_paths=('/v10/excel','/v10/intelligence','/intelligence/rules','/v10/matching','/v10/myhr','/v10/devices','/v10/payslip')
+        if p not in v10_paths:
+            return old_get(self)
+        u=self.require()
+        if not u:return
         if p=='/v10/excel': return self.v10_excel_grid(u)
         if p=='/v10/intelligence': return self.v10_intelligence(u)
         if p=='/intelligence/rules': return self.v10_rules(u)
@@ -209,9 +213,13 @@ document.getElementById('undo').onclick=()=>{if(undoStack.length){redoStack.push
         if p=='/v10/payslip': return self.v10_payslip(u)
         return old_get(self)
     def post(self):
-        p=urlparse(self.path).path; u=self.require()
-        if p.startswith('/v10/') and not u:return
-        if p.startswith('/v10/') and self.form().get('_csrf')!=u.get('csrf') and p not in ('/v10/payslip',): return self.send(page('Security','<div class="card"><div class="alert">Invalid CSRF.</div></div>',u),403)
+        p=urlparse(self.path).path
+        v10_paths=('/v10/alert-rule','/v10/matching/decision','/v10/matching/accept-safe','/v10/request/action','/v10/bulk','/v10/import/validate')
+        if p not in v10_paths:
+            return old_post(self)
+        u=self.require()
+        if not u:return
+        if self.form().get('_csrf')!=u.get('csrf') and p not in ('/v10/payslip',): return self.send(page('Security','<div class="card"><div class="alert">Invalid CSRF.</div></div>',u),403)
         if p=='/v10/alert-rule': return self.v10_rule_save(u,self.form())
         if p=='/v10/matching/decision': return self.v10_match_decision(u,self.form())
         if p=='/v10/matching/accept-safe': return self.v10_match_safe(u)
