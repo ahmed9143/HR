@@ -1529,8 +1529,9 @@ class H(BaseHTTPRequestHandler):
         tabs=[('<a href="#data">البيانات</a>','employees.view'),('<a href="#timeline">Timeline</a>','employees.view'),('<a href="#attendance">الحضور</a>','attendance.view'),('<a href="#leaves">الإجازات</a>','leave.create'),('<a href="#documents">المستندات</a>','documents.manage'),('<a href="#discipline">الإنذارات والجزاءات</a>','discipline.manage'),('<a href="#payroll">المرتبات</a>','payroll.view')]
         nav=''.join(a for a,p in tabs if can(u,p))
         doc_status_badge={'current':'<span class="badge b-ok">حالي</span>','superseded':'<span class="badge b-gray">نسخة سابقة</span>'}
+        _row_style=lambda r: ' style="opacity:.55"' if r["status"]!="current" else ""
         docs_rows=''.join(
-            f'<tr{" style=\"opacity:.55\"" if r["status"]!="current" else ""}><td>{esc(r["file_name"])}</td><td>{esc(r["category"] or "عام")}</td>'
+            f'<tr{_row_style(r)}><td>{esc(r["file_name"])}</td><td>{esc(r["category"] or "عام")}</td>'
             f'<td>v{r["version"] or 1}</td><td>{doc_status_badge.get(r["status"] or "current","")}</td>'
             f'<td>{esc(r["expiry_date"] or "—")} {expiry_badge(r["expiry_date"])}</td>'
             f'<td><small>{esc((r["checksum"] or "")[:12])}…</small></td>'
@@ -2275,7 +2276,8 @@ class H(BaseHTTPRequestHandler):
         c.execute('UPDATE users SET role=?,scope_type=?,scope_value=?,must_change_password=?,permission_version=COALESCE(permission_version,1)+1 WHERE username=?',(role,scope,f.get('scope_value',''),1 if f.get('must_change_password') else 0,target)); c.commit(); c.close(); audit(u['username'],u['role'],'تعديل الوصول','المستخدمون',target,role); self.redirect('/access')
     def backups_page(self,u):
         c=db(); rows=c.execute('SELECT * FROM system_backups ORDER BY id DESC LIMIT 100').fetchall(); c.close(); trs=''.join(f'<tr><td>{esc(r["created_at"])}</td><td>{esc(r["label"])}</td><td>{esc(r["created_by"])}</td><td>{r["db_size"]}</td><td><form method="post" action="/backup/restore">{csrf_field(u)}<input type="hidden" name="id" value="{r["id"]}"><button class="btn warn">Rollback</button></form></td></tr>' for r in rows)
-        body=f'<div class="top"><div class="title"><h1>Backup & Rollback</h1><p>نسخ قاعدة البيانات + ملفات الموظفين، مع نسخة أمان تلقائية قبل Restore.</p></div><form method="post" action="/backup" style="display:inline">{csrf_field(u)}<button class="btn">إنشاء نسخة الآن</button></form></div><div class="card table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>بواسطة</th><th>الحجم</th><th></th></tr></thead><tbody>{trs or "<tr><td colspan=\"5\">لا توجد نسخ</td></tr>"}</tbody></table></div>'; self.send(page('Backup & Rollback',body,u,'dashboard'))
+        _no_backups_row='<tr><td colspan="5">لا توجد نسخ</td></tr>'
+        body=f'<div class="top"><div class="title"><h1>Backup & Rollback</h1><p>نسخ قاعدة البيانات + ملفات الموظفين، مع نسخة أمان تلقائية قبل Restore.</p></div><form method="post" action="/backup" style="display:inline">{csrf_field(u)}<button class="btn">إنشاء نسخة الآن</button></form></div><div class="card table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>بواسطة</th><th>الحجم</th><th></th></tr></thead><tbody>{trs or _no_backups_row}</tbody></table></div>'; self.send(page('Backup & Rollback',body,u,'dashboard'))
     def backup_restore(self,u,f):
         c=db(); r=c.execute('SELECT * FROM system_backups WHERE id=?',(f.get('id'),)).fetchone(); c.close()
         if not r or not os.path.exists(r['file_path']): return self.redirect('/backups')
