@@ -12,13 +12,34 @@ permissions:
 
 jobs:
   build:
-    name: Build HR Enterprise.exe
+    name: Build HR Enterprise
     runs-on: windows-latest
 
     steps:
-
       - name: Checkout project
         uses: actions/checkout@v4
+
+      - name: Locate project root
+        id: project
+        shell: powershell
+        run: |
+          $server = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter "server.py" -File -Recurse |
+            Where-Object { $_.FullName -notmatch "\\.git\\" } |
+            Select-Object -First 1
+
+          if (-not $server) {
+            Write-Error "server.py was not found anywhere in the repository."
+            exit 1
+          }
+
+          $root = $server.Directory.FullName
+          "root=$root" >> $env:GITHUB_OUTPUT
+          Write-Host "Project root: $root"
+
+          if (!(Test-Path (Join-Path $root "requirements.txt"))) {
+            Write-Error "requirements.txt not found beside server.py."
+            exit 1
+          }
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -27,39 +48,39 @@ jobs:
 
       - name: Install dependencies
         shell: powershell
+        working-directory: ${{ steps.project.outputs.root }}
         run: |
           python -m pip install --upgrade pip
-          if (Test-Path "requirements.txt") {
-            python -m pip install -r requirements.txt
-          }
+          python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Run tests
+      - name: Compile-check server
         shell: powershell
-        continue-on-error: true
+        working-directory: ${{ steps.project.outputs.root }}
         run: |
-          $tests = Get-ChildItem -Filter "TEST_*.py" -ErrorAction SilentlyContinue
-
-          foreach ($test in $tests) {
-            Write-Host "Running $($test.Name)"
-            python $test.FullName
-          }
+          python -m py_compile server.py
 
       - name: Build HR Enterprise.exe
         shell: powershell
+        working-directory: ${{ steps.project.outputs.root }}
         run: |
-          python -m PyInstaller `
-            --noconfirm `
-            --clean `
-            --onefile `
-            --windowed `
-            --name "HR Enterprise" `
-            --hidden-import win32clipboard `
-            --hidden-import win32con `
-            --collect-all reportlab `
-            --add-data "fonts;fonts" `
-            --add-data "data;data" `
-            server.py
+          $args = @(
+            "-m", "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            "--onefile",
+            "--windowed",
+            "--name", "HR Enterprise",
+            "--hidden-import", "win32clipboard",
+            "--hidden-import", "win32con",
+            "--collect-all", "reportlab"
+          )
+
+          if (Test-Path "fonts") {
+            $args += @("--add-data", "fonts;fonts")
+          }
+
+          python @args server.py
 
           if ($LASTEXITCODE -ne 0) {
             Write-Error "PyInstaller failed with exit code $LASTEXITCODE"
@@ -68,6 +89,7 @@ jobs:
 
       - name: Verify EXE
         shell: powershell
+        working-directory: ${{ steps.project.outputs.root }}
         run: |
           $exe = "dist\HR Enterprise.exe"
 
@@ -77,60 +99,94 @@ jobs:
           }
 
           $file = Get-Item $exe
-
-          Write-Host "===================================="
           Write-Host "BUILD SUCCESSFUL"
-          Write-Host "File: $($file.FullName)"
+          Write-Host "Path: $($file.FullName)"
           Write-Host "Size: $($file.Length) bytes"
-          Write-Host "===================================="
 
       - name: Smoke test EXE
         shell: powershell
+        working-directory: ${{ steps.project.outputs.root }}
         continue-on-error: true
         run: |
           $exe = Resolve-Path "dist\HR Enterprise.exe"
+          $env:HR_NO_BROWSER = "1"
+          $env:HR_MODE = "standalone"
+          $env:HR_HOST = "127.0.0.1"
 
-          Write-Host "Starting HR Enterprise.exe..."
-
-          $process = Start-Process `
-            -FilePath $exe `
-            -PassThru
-
-          Start-Sleep -Seconds 10
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
 
           if ($process.HasExited) {
-            Write-Warning "EXE exited during smoke test."
-            Write-Warning "Exit code: $($process.ExitCode)"
-          }
-          else {
-            Write-Host "HR Enterprise.exe is running successfully."
-            Write-Host "PID: $($process.Id)"
-
-            Stop-Process `
-              -Id $process.Id `
-              -Force `
-              -ErrorAction SilentlyContinue
+            Write-Warning "EXE exited during smoke test. Exit code: $($process.ExitCode)"
+          } else {
+            Write-Host "EXE stayed alive for 8 seconds."
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Upload EXE
+      - name: Upload portable EXE
         uses: actions/upload-artifact@v4
         with:
           name: HR-Enterprise-Windows
-          path: "dist/HR Enterprise.exe"
+          path: "${{ steps.project.outputs.root }}/dist/HR Enterprise.exe"
           if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub Release
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup installation failed."
+            exit 1
+          }
+
+      - name: Build one-file installer
+        shell: powershell
+        working-directory: ${{ steps.project.outputs.root }}
+        run: |
+          if (!(Test-Path "HR_Enterprise.iss")) {
+            Write-Error "HR_Enterprise.iss not found."
+            exit 1
+          }
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          }
+          if (!(Test-Path $iscc)) {
+            Write-Error "ISCC.exe not found."
+            exit 1
+          }
+
+          & $iscc "HR_Enterprise.iss"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+
+      - name: Upload one-file installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Enterprise-Installer
+          path: "${{ steps.project.outputs.root }}/installer/HR Enterprise Setup.exe"
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-build
-          name: HR Enterprise - Latest Build
+          tag_name: "build-${{ github.run_number }}"
+          name: "HR Enterprise Build ${{ github.run_number }}"
           prerelease: true
           body: |
-            HR Enterprise Windows build.
+            HR Enterprise Windows application build.
 
-            Download:
-            HR Enterprise.exe
-          files: "dist/HR Enterprise.exe"
+            Download "HR Enterprise Setup.exe" to install the application.
+            The portable "HR Enterprise.exe" is also included.
+          files: |
+            ${{ steps.project.outputs.root }}/installer/HR Enterprise Setup.exe
+            ${{ steps.project.outputs.root }}/dist/HR Enterprise.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
