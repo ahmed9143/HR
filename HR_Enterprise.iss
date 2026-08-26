@@ -1,5 +1,5 @@
 #define MyAppName "HR Enterprise"
-#define MyAppVersion "10.0"
+#define MyAppVersion "12.0.0-Enterprise-Final"
 #define MyAppExeName "HR Enterprise.exe"
 
 [Setup]
@@ -17,7 +17,7 @@ ArchitecturesInstallIn64BitMode=x64
 
 [Files]
 Source: "dist\HR Enterprise.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "README_V100_AR.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "README_V110_FEATURE_COMPLETE_AR.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "VERSION.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

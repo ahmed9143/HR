@@ -19,3 +19,11 @@
 
 ## مهم
 هذه النسخة لا تضيف microservices أو framework جديد. V10 يبقى الأساس، وV11 يضيف طبقة Features مباشرة فوقه.
+
+## V12 Enterprise Final additions
+- QR Identity: stable opaque tokens, verification, regenerate/revoke, audit, USB/manual scanner and camera fallback.
+- Printable Employee ID Cards: single, bulk and PDF, with QR and optional employee photo.
+- Contract lifecycle records with renewal/history.
+- Training records and certificate expiry tracking.
+- Evaluation cycles, submission, approval and history.
+- Windows GitHub Actions build/installer pipeline.

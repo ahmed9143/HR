@@ -12,7 +12,7 @@ try:
 except Exception:
     A4=canvas=pdfmetrics=TTFont=None
 
-APP_VERSION='10.0 Enterprise Complete'
+APP_VERSION='12.0 Enterprise Final'
 BASE=os.path.dirname(os.path.abspath(sys.executable if getattr(sys,'frozen',False) else __file__))
 # Executable is read-only in production. Persistent data belongs in ProgramData on Windows.
 def _default_data_dir():
@@ -390,7 +390,67 @@ HOSPITAL_ALIASES={
 'job':['الوظيفه','الوظيفة','الوظيفه الحالية','المسمى الوظيفي','المسمى الوظيفى','job','position','title'],
 'contract_date':['تاريخ التعاقد','تاريخ العقد','contract date','hire date'],
 'contract_amount':['مبلغ التعاقد','قيمة التعاقد','قيمة العقد','مبلغ العقد','contract amount','salary','amount']}
-def find_hospital_header(rows,max_scan=40):
+HOSPITAL_FIELD_LABELS={'emp_no':'Employee ID','name':'Employee Name','employee_group':'Employee Group','birth_date':'Birth Date','national_id':'National ID','address':'Address','qualification':'Qualification','phone':'Phone','iban':'IBAN','bank_name':'Bank Name','bank_branch':'Bank Branch','department':'Department','unit':'Unit','job':'Job Title','contract_date':'Contract Date','contract_amount':'Contract Amount'}
+def mapping_preview_html(rows,header_idx,idx):
+    """Small table showing which Excel/pasted column matched which system field, for transparency before import."""
+    if header_idx is None or not idx: return ''
+    header_row=rows[header_idx] if header_idx<len(rows) else []
+    items=[]
+    for field,label in HOSPITAL_FIELD_LABELS.items():
+        i=idx.get(field)
+        if i is None: continue
+        col_name=str(header_row[i]).strip() if i<len(header_row) and header_row[i] not in (None,'') else f'عمود {i+1}'
+        items.append((col_name,label))
+    if not items: return ''
+    rows_html=''.join(f'<tr><td>{esc(c)}</td><td>→</td><td><b>{esc(l)}</b></td></tr>' for c,l in items)
+    return f'<div class="card" style="margin-top:16px"><h3>🧭 Column Mapping (Auto-detected)</h3><table class="table"><thead><tr><th>Excel Column</th><th></th><th>System Field</th></tr></thead><tbody>{rows_html}</tbody></table></div>'
+def clean_digits_field(v):
+    """Non-destructive formatting cleanup: strip spaces/dashes from numeric-ish fields, never alter the digits themselves."""
+    s=str(v or '').strip()
+    if not s: return s
+    cleaned=re.sub(r'[\s\-]+','',s)
+    return cleaned if re.fullmatch(r'[\d+]+',cleaned) else s
+def find_existing_emp_codes(codes):
+    if not codes: return {}
+    c=db()
+    try:
+        qmarks=','.join('?'*len(codes)); rows=c.execute(f'SELECT emp_code,name FROM employees WHERE emp_code IN ({qmarks})',list(codes)).fetchall()
+    finally: c.close()
+    return {r['emp_code']:r['name'] for r in rows}
+
+def find_existing_employees(codes):
+    """Full existing rows for duplicate-detection UI (Preview screen), keyed by emp_code."""
+    if not codes: return {}
+    c=db()
+    try:
+        qmarks=','.join('?'*len(codes)); rows=c.execute(f'SELECT * FROM employees WHERE emp_code IN ({qmarks})',list(codes)).fetchall()
+    finally: c.close()
+    return {r['emp_code']:dict(r) for r in rows}
+
+DUPLICATE_FIELD_LABELS=[('name','الاسم'),('department','الإدارة'),('unit','الوحدة'),('job','الوظيفة'),('phone','الهاتف'),('national_id','الرقم القومي'),('address','العنوان'),('qualification','المؤهل'),('iban','IBAN'),('bank_name','البنك'),('bank_branch','الفرع'),('contract_date','تاريخ التعاقد'),('contract_amount','مبلغ التعاقد'),('birth_date','تاريخ الميلاد'),('employee_group','المجموعة')]
+
+def build_duplicate_rows(ready_records):
+    """For every incoming record whose emp_code already exists, compute the existing
+    employee and which fields actually changed. Used to drive the Preview page's
+    Skip / Update Existing / Create as New decision — duplicates are never silently
+    updated without the user seeing what will change."""
+    codes={r['emp_code'] for r in ready_records}
+    existing=find_existing_employees(codes)
+    dups=[]
+    for i,rec in enumerate(ready_records,1):
+        ex=existing.get(rec['emp_code'])
+        if not ex: continue
+        changed=[]
+        for fk,label in DUPLICATE_FIELD_LABELS:
+            newv=str(rec.get(fk) or '').strip(); oldv=str(ex.get(fk) or '').strip()
+            if newv and newv!=oldv: changed.append((label,oldv,newv))
+        dups.append({'row':i,'emp_code':rec['emp_code'],'incoming_name':rec.get('name',''),'existing_name':ex.get('name',''),'changed':changed})
+    return dups
+
+def find_hospital_header(rows, max_scan=30):
+    """Scan the first `max_scan` rows for the header row of a hospital employee sheet.
+    Supports Arabic/English/mixed headers, any column order, and a saved custom mapping.
+    Returns (header_row_index, {field_key: column_index}) or (None, None) if not found."""
     best=None
     dynamic={}
     try:
@@ -419,42 +479,105 @@ def hospital_row_to_record(row,idx):
     def g(field):
         i=idx.get(field); return row[i] if i is not None and i<len(row) else ''
     name=cell_text(g('name')); national=cell_text(g('national_id')); serial=cell_text(g('emp_no'))
-    return {'emp_code':serial or national,'name':name,'employee_group':cell_text(g('employee_group')),'birth_date':cell_text(g('birth_date')),'national_id':national,'address':cell_text(g('address')),'qualification':cell_text(g('qualification')),'phone':cell_text(g('phone')),'iban':cell_text(g('iban')),'bank_name':cell_text(g('bank_name')),'bank_branch':cell_text(g('bank_branch')),'department':cell_text(g('department')),'unit':cell_text(g('unit')),'job':cell_text(g('job')),'contract_date':cell_text(g('contract_date')),'contract_amount':cell_num(g('contract_amount'))}
+    return {'emp_code':clean_digits_field(serial or national),'name':name,'employee_group':cell_text(g('employee_group')),'birth_date':cell_text(g('birth_date')),'national_id':clean_digits_field(national),'address':cell_text(g('address')),'qualification':cell_text(g('qualification')),'phone':clean_digits_field(cell_text(g('phone'))),'iban':clean_digits_field(cell_text(g('iban'))),'bank_name':cell_text(g('bank_name')),'bank_branch':cell_text(g('bank_branch')),'department':cell_text(g('department')),'unit':cell_text(g('unit')),'job':cell_text(g('job')),'contract_date':cell_text(g('contract_date')),'contract_amount':cell_num(g('contract_amount'))}
 def looks_like_hospital_employee(rec):
     name=rec.get('name','').strip()
     if len(name)<2:return False
     if not (rec.get('emp_code') or rec.get('national_id') or rec.get('phone')):return False
     return not any(x in name for x in ('التوقيع','رئيس شئون العاملين','شئون العاملين'))
-def validate_employee_records(records):
-    errors=[]; seen={}; valid=[]
-    for i,rec in enumerate(records,1):
-        code=rec.get('emp_code','').strip(); name=rec.get('name','').strip();
-        if not code: errors.append((i,'Employee ID','مفقود',rec)); continue
-        if not name: errors.append((i,'Full Name','مفقود',rec)); continue
-        if code in seen: errors.append((i,'Employee ID','مكرر داخل الملف',rec)); continue
-        seen[code]=i
-        if rec.get('birth_date'):
-            try: datetime.fromisoformat(str(rec['birth_date'])[:10])
-            except: errors.append((i,'Birth Date','تاريخ غير صالح',rec)); continue
-        if rec.get('national_id') and not re.fullmatch(r'\d{10,20}',str(rec['national_id']).replace(' ','')):
-            errors.append((i,'National ID','صيغة غير صالحة',rec)); continue
-        valid.append(rec)
-    return valid,errors
+def parse_flexible_date(raw):
+    """Try several common date layouts; return (iso_string_or_original, ok)."""
+    s=str(raw or '').strip()
+    if not s: return '',True
+    try: return datetime.fromisoformat(s[:10]).date().isoformat(), True
+    except Exception: pass
+    for fmt in ('%d/%m/%Y','%d-%m-%Y','%Y/%m/%d','%m/%d/%Y','%d.%m.%Y','%d %m %Y'):
+        try: return datetime.strptime(s,fmt).date().isoformat(), True
+        except Exception: continue
+    return s, False
 
-def upsert_hospital_records(records,user,source):
-    c=db(); new=updated=skipped=0
+def gen_next_emp_code(prefix, used=None):
+    """Next free sequential number after the highest existing emp_code with this prefix."""
+    used=used or set()
+    c=db()
+    try: rows=c.execute('SELECT emp_code FROM employees WHERE emp_code LIKE ?',(prefix+'%',)).fetchall()
+    finally: c.close()
+    maxn=0; patt=re.compile(re.escape(prefix)+r'(\d+)$')
+    for r in rows:
+        m=patt.match(r['emp_code'] or '')
+        if m:
+            try: maxn=max(maxn,int(m.group(1)))
+            except Exception: pass
+    n=maxn+1
+    while f'{prefix}{n:03d}' in used: n+=1
+    return n
+
+def validate_employee_records(records, auto_generate_ids=True):
+    """Never blocks the whole batch. Returns (ready, warnings, errors):
+    - ready: records safe to import (missing IDs auto-generated, dates normalized when possible)
+    - warnings: non-blocking issues on rows that ARE included in `ready` (includes "already exists → will update" notes)
+    - errors: blocking issues on rows that were excluded from `ready` (need manual review)
+    """
+    prefix=setting('emp_id_prefix') or 'EMP-'
+    errors=[]; warnings=[]; ready=[]; seen={}; used=set(); next_auto=None
+    for i,rec in enumerate(records,1):
+        rec=dict(rec)
+        code=(rec.get('emp_code') or '').strip(); name=(rec.get('name') or '').strip()
+        if not name: errors.append((i,'Full Name','مفقود — تم تجاهل الصف، الاسم مطلوب دائمًا',rec)); continue
+        if not code:
+            if auto_generate_ids:
+                if next_auto is None: next_auto=gen_next_emp_code(prefix,used)
+                new_code=f'{prefix}{next_auto:03d}'
+                while new_code in used: next_auto+=1; new_code=f'{prefix}{next_auto:03d}'
+                code=new_code; next_auto+=1; rec['emp_code']=code; rec['_id_auto_generated']=True
+                warnings.append((i,'Employee ID',f'مفقود — تم توليده تلقائيًا: {code}',rec))
+            else:
+                errors.append((i,'Employee ID','مفقود',rec)); continue
+        elif code in seen:
+            errors.append((i,'Employee ID',f'مكرر داخل الملف (نفس كود الصف {seen[code]}) — يحتاج مراجعة يدوية',rec)); continue
+        seen[code]=i; used.add(code)
+        if rec.get('birth_date'):
+            parsed,ok=parse_flexible_date(rec['birth_date'])
+            if ok: rec['birth_date']=parsed
+            else: warnings.append((i,'Birth Date',f'صيغة تاريخ غير مؤكدة، تم حفظها كما هي: {rec["birth_date"]}',rec))
+        if rec.get('national_id') and not re.fullmatch(r'\d{10,20}',str(rec['national_id']).replace(' ','')):
+            warnings.append((i,'National ID','صيغة غير معتادة — تم الاستيراد كما هو',rec))
+        ready.append(rec)
+    existing=find_existing_emp_codes({r['emp_code'] for r in ready})
+    for i,rec in enumerate(ready,1):
+        if rec['emp_code'] in existing:
+            warnings.append((i,'Employee ID',f'كود موجود بالفعل ({existing[rec["emp_code"]]}) — سيتم تحديث بيانات هذا الموظف بدل إنشاء موظف جديد',rec))
+    return ready,warnings,errors
+
+def upsert_hospital_records(records,user,source,actions=None):
+    """actions: optional {emp_code: 'skip'|'update'|'new'} from the Preview page's
+    duplicate-resolution controls. Unlisted/duplicate-free records behave as before
+    (insert if new, update if the code already exists)."""
+    actions=actions or {}
+    c=db(); new=updated=skipped=created_as_new=0
     sql='INSERT INTO employees(emp_code,name,employee_group,birth_date,national_id,address,qualification,phone,iban,bank_name,bank_branch,department,unit,job,contract_date,contract_amount,status,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(emp_code) DO UPDATE SET name=excluded.name,employee_group=excluded.employee_group,birth_date=excluded.birth_date,national_id=excluded.national_id,address=excluded.address,qualification=excluded.qualification,phone=excluded.phone,iban=excluded.iban,bank_name=excluded.bank_name,bank_branch=excluded.bank_branch,department=excluded.department,unit=excluded.unit,job=excluded.job,contract_date=excluded.contract_date,contract_amount=excluded.contract_amount,updated_at=excluded.updated_at'
     try:
         for rec in records:
             if not looks_like_hospital_employee(rec): skipped+=1; continue
+            rec=dict(rec)
             exists=c.execute('SELECT 1 FROM employees WHERE emp_code=?',(rec['emp_code'],)).fetchone() is not None
+            action=actions.get(rec['emp_code']) if exists else None
+            if action=='skip':
+                skipped+=1; continue
+            if action=='new':
+                prefix=setting('emp_id_prefix') or 'EMP-'
+                n=gen_next_emp_code(prefix)
+                new_code=f'{prefix}{n:03d}'
+                while c.execute('SELECT 1 FROM employees WHERE emp_code=?',(new_code,)).fetchone() is not None:
+                    n+=1; new_code=f'{prefix}{n:03d}'
+                rec['emp_code']=new_code; exists=False; created_as_new+=1
             c.execute(sql,(rec['emp_code'],rec['name'],rec['employee_group'],rec['birth_date'],rec['national_id'],rec['address'],rec['qualification'],rec['phone'],rec['iban'],rec['bank_name'],rec['bank_branch'],rec['department'],rec['unit'],rec['job'],rec['contract_date'],rec['contract_amount'],'على رأس العمل',now()))
             if exists: updated+=1
             else: new+=1
         c.commit()
     except Exception:
         c.rollback(); c.close(); raise
-    c.close(); audit(user['username'],user['role'],'استيراد','الموظفون',source,f'new={new}, updated={updated}, skipped={skipped}')
+    c.close(); audit(user['username'],user['role'],'استيراد','الموظفون',source,f'new={new}, updated={updated}, skipped={skipped}, created_as_new_from_duplicate={created_as_new}')
     return new,updated,skipped
 
 def import_seed(path):
@@ -673,6 +796,11 @@ def employee_self_code(u):
     c.close()
     return row['emp_code'] if row else None
 
+def table_exists(name):
+    try:
+        c=db(); r=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(name,)).fetchone(); c.close(); return bool(r)
+    except Exception: return False
+
 def hr_alerts_snapshot(u):
     c=db(); today=date.today(); d30=(today+timedelta(days=int(setting('contract_alert_days') or 30))).isoformat()
     dtrain=(today+timedelta(days=int(setting('training_alert_days') or 30))).isoformat()
@@ -684,7 +812,8 @@ def hr_alerts_snapshot(u):
                        WHERE d.status='current' AND d.expiry_date IS NOT NULL AND d.expiry_date< ? {scope_sql}""",[today.isoformat()]+scope_params)
     exp_cred=q(f"""SELECT COUNT(DISTINCT c.emp_code) n FROM credentials c JOIN employees e ON e.emp_code=c.emp_code
                    WHERE c.expiry_date IS NOT NULL AND c.expiry_date< ? {scope_sql}""",[today.isoformat()]+scope_params)
-    exp_contract=q(f"""SELECT COUNT(*) n FROM employees e WHERE e.status='على رأس العمل'
+    exp_contract=q(f"""SELECT COUNT(*) n FROM contracts ct JOIN employees e ON e.emp_code=ct.emp_code
+                       WHERE ct.status='active' AND ct.end_date IS NOT NULL AND ct.end_date<>'' AND ct.end_date<=? {scope_sql}""",[d30]+scope_params) if table_exists('contracts') else q(f"""SELECT COUNT(*) n FROM employees e WHERE e.status='على رأس العمل'
                        AND e.contract_date IS NOT NULL AND e.contract_date<>'' AND e.contract_date<=? {scope_sql}""",[d30]+scope_params)
     late_limit=int(setting('monthly_late_limit_minutes') or 120)
     threshold=float(setting('late_risk_percent') or 80)/100.0
@@ -698,7 +827,8 @@ def hr_alerts_snapshot(u):
         for r in rows:
             have={x['category'] for x in c.execute("SELECT category FROM documents WHERE emp_code=? AND status='current'",(r['emp_code'],)).fetchall()}
             if any(x not in have for x in req): missing+=1
-    train=q(f"""SELECT COUNT(*) n FROM training t JOIN employees e ON e.emp_code=t.emp_code
+    train=q(f"""SELECT COUNT(*) n FROM training_records t JOIN employees e ON e.emp_code=t.emp_code
+                WHERE t.expiry_date IS NOT NULL AND t.expiry_date<=? {scope_sql}""",[dtrain]+scope_params) if table_exists('training_records') else q(f"""SELECT COUNT(*) n FROM training t JOIN employees e ON e.emp_code=t.emp_code
                 WHERE t.expiry_date IS NOT NULL AND t.expiry_date<=? {scope_sql}""",[dtrain]+scope_params)
     c.close()
     return [
@@ -771,6 +901,10 @@ def page(title,body,user,active='dashboard'):
     if can(user,'employees.edit'): nav.append(('import','Excel Center','/import'))
     if can(user,'import.mapping'): nav.append(('import-map','ربط Excel','/import/mapping'))
     if can(user,'documents.manage'): nav.append(('documents','المستندات','/documents'))
+    if can(user,'contracts.manage'): nav.append(('contracts','📄 العقود','/contracts'))
+    if can(user,'training.manage'): nav.append(('training','🎓 التدريب','/training'))
+    if can(user,'evaluations.manage'): nav.append(('evaluations','⭐ التقييمات','/evaluations'))
+    if can(user,'qr.manage'): nav.append(('qr','🪪 QR / ID Cards','/id-cards'))
     if can(user,'payroll.view'): nav.append(('payroll','المرتبات','/payroll'))
     if can(user,'payroll.view'): nav.append(('payroll-review','مراجعة المرتبات','/payroll/review'))
     if can(user,'roles.manage'): nav.append(('roles','الأدوار والصلاحيات','/roles'))
@@ -1642,28 +1776,15 @@ class H(BaseHTTPRequestHandler):
         self.send(page('الحضور',body,u,'attendance'))
 
     def do_import_employees_paste(self,u,f):
+        # SAFETY: this route must NEVER commit directly. It only parses the pasted
+        # text into rows and hands off to the shared Preview/Validate stage, exactly
+        # like every other employee-import source (Upload, Drag & Drop, Excel Center Pro).
         text=f.get('paste_data','')
-        try:
-            raw_lines=[x for x in text.replace('\r','').split('\n') if x.strip()]
-            if not raw_lines: raise ValueError('لم يتم لصق أي بيانات.')
-            rows=[x.split('\t') for x in raw_lines]; header_idx,idx=find_hospital_header(rows)
-            if header_idx is None:
-                if max(len(r) for r in rows)<8: raise ValueError('لم أتعرف على هيكل شيت الموظفين.')
-                idx={field:i for i,field in enumerate(HOSPITAL_FIELDS)}; data_rows=rows
-            else:data_rows=rows[header_idx+1:]
-            records=[hospital_row_to_record(r,idx) for r in data_rows]; valid,errors=validate_employee_records(records)
-            if errors:
-                c=db(); cur=c.execute('INSERT INTO file_imports(source,file_name,records,created_by,created_at,details) VALUES(?,?,?,?,?,?)',('employees_paste','Paste Excel',0,u['username'],now(),f'atomic_blocked_errors={len(errors)}')); runid=cur.lastrowid
-                for row_no,field,msg,raw in errors:c.execute('INSERT INTO import_errors(run_id,row_no,field,message,raw_json) VALUES(?,?,?,?,?)',(runid,row_no,field,msg,json.dumps(raw,ensure_ascii=False)))
-                c.commit(); c.close(); return self.send(page('Import Validation',f'<div class="card"><h2>🔴 لم يتم إدخال أي سجل</h2><p>Atomic import: أصلح {len(errors)} خطأ ثم أعد المحاولة.</p><a class="btn bad" href="/export/import-errors/{runid}">تصدير الأخطاء</a></div>',u,'import'),400)
-            new,upd,skip=upsert_hospital_records(valid,u,'Paste Excel'); runid=None
-            if errors:
-                c=db(); cur=c.execute('INSERT INTO file_imports(source,file_name,records,created_by,created_at,details) VALUES(?,?,?,?,?,?)',('employees_paste','Paste Excel',len(valid),u['username'],now(),f'errors={len(errors)}')); runid=cur.lastrowid
-                for row_no,field,msg,raw in errors:c.execute('INSERT INTO import_errors(run_id,row_no,field,message,raw_json) VALUES(?,?,?,?,?)',(runid,row_no,field,msg,json.dumps(raw,ensure_ascii=False)))
-                c.commit(); c.close()
-            link=f'<a class="btn bad" href="/import/errors/{runid}">عرض/تصدير الأخطاء ({len(errors)})</a>' if errors else ''
-            return self.send(page('تم الفحص',f'<div class="card"><h2>نتيجة فحص اللصق</h2><p>إجمالي الصفوف: <b>{len(records)}</b> · صالح: <b>{len(valid)}</b> · أخطاء: <b>{len(errors)}</b> · جديد: <b>{new}</b> · تحديث: <b>{upd}</b></p>{link}<a class="btn gray" href="/employees">عرض الموظفين</a></div>',u,'import'))
-        except Exception as e:return self.send(page('خطأ في اللصق',f'<div class="card"><div class="alert">{esc(e)}</div></div>',u,'import'),400)
+        raw_lines=[x for x in text.replace('\r','').split('\n') if x.strip()]
+        if not raw_lines:
+            return self.send(page('خطأ في اللصق','<div class="card"><div class="alert">لم يتم لصق أي بيانات.</div></div>',u,'import'),400)
+        rows=[x.split('\t') for x in raw_lines]
+        return _render_import_preview(self,u,rows)
 
 
 
@@ -1685,7 +1806,7 @@ class H(BaseHTTPRequestHandler):
         else:
             mtrs=''.join('<tr><td>'+esc(ec)+'</td><td>'+esc(en)+'</td><td>'+esc(", ".join(miss))+'</td><td><a class="btn gray" href="/employee/profile/'+esc(ec)+'#documents">رفع المستند</a></td></tr>' for ec,en,miss in missing_rows)
             missing_html='<div class="card" style="margin-top:16px"><h3>تتبع المستندات الناقصة <span class="badge b-warn">'+str(len(missing_rows))+' موظف</span></h3><p style="color:#667085">التصنيفات المطلوبة (من الإعدادات): <b>'+esc(", ".join(required))+'</b> \u2014 القائمة تتحدّث تلقائيًا فور رفع مستند أو استيراد مجلد.</p><div class="table-wrap"><table class="table"><thead><tr><th>الكود</th><th>الموظف</th><th>التصنيفات الناقصة</th><th></th></tr></thead><tbody>'+mtrs+'</tbody></table></div></div>'
-        body = '<div class="top"><div class="title"><h1>مركز الاستيراد والتصدير</h1><p>يدعم نفس شيت الموظفين الأصلي: م، الإسم، المجموعة الوظيفية، الميلاد، الرقم القومي، العنوان، المؤهل، الهاتف، IPAN، البنك، الفرع، الإدارة، الوحدة، الوظيفة، التعاقد، مبلغ التعاقد</p></div><span class="badge b-blue" style="font-size:14px">V4.4 · PASTE READY</span></div>\n<div class="card" style="margin-bottom:16px;border:2px solid #84adff;background:linear-gradient(180deg,#fff,#f7fbff)">\n  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">\n    <div><h2 style="margin:0 0 6px">📋 لصق بيانات الموظفين من Excel</h2><p style="margin:0;color:#667085">انسخ الجدول من Excel ثم اضغط داخل المربع واضغط Ctrl+V. ستظهر البيانات هنا قبل الحفظ.</p></div>\n    <span class="badge b-blue">بدون Upload</span>\n  </div>\n  <form method="post" action="/import/employees/paste" style="margin-top:16px">'+csrf_field(u)+'\n    <div class="field full"><label>منطقة اللصق — اضغط هنا ثم Ctrl+V</label>\n      <textarea id="pasteBox" name="paste_data" rows="9" spellcheck="false" autocomplete="off" placeholder="الصق هنا صف العناوين + صفوف الموظفين من Excel..."></textarea>\n    </div>\n    <div id="pasteStatus" class="alert" style="display:none;margin-top:10px"></div>\n    <div id="pastePreview" class="table-wrap" style="margin-top:12px;max-height:340px;overflow:auto"></div>\n    <div class="actions" style="margin-top:12px">\n      <button class="btn ok" type="submit">استيراد البيانات الملصوقة</button>\n      <button class="btn gray" type="button" id="clearPaste">مسح</button>\n      <button class="btn gray" type="button" id="samplePaste">إدخال مثال</button>\n    </div>\n  </form>\n</div>\n<div class="grid g3">\n<div class="card"><h3>استيراد ملف Excel</h3><p>يدعم XLSX / XLSM ويكتشف ورقة الموظفين والأعمدة العربية أو الإنجليزية.</p><form method="post" action="/import/employees" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".xlsx,.xlsm" required><button class="btn" style="margin-top:12px">استيراد الموظفين</button></form><div class="actions" style="margin-top:10px"><a class="btn gray" href="/template/employees">تحميل Template</a></div></div>\n<div class="card"><h3>استيراد الحضور</h3><p>التاريخ + كود الموظف، مع الحضور والانصراف والتأخير والإضافي.</p><form method="post" action="/attendance/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".xlsx,.xlsm,.csv" required><button class="btn" style="margin-top:12px">استيراد الحضور</button></form></div>\n<div class="card"><h3>استيراد مجلدات الموظفين (ZIP)</h3><p>ZIP فيه مجلد لكل موظف — اسم المجلد بالاسم أو الكود، يترّبط تلقائيًا. الملفات المؤكدة تتوزع فورًا على تصنيفات المستندات وتظهر في تتبع الناقص تحت.</p><form method="post" action="/documents/folders/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".zip" required><button class="btn" style="margin-top:12px">استيراد ZIP المجلدات</button></form></div>\n<div class="card"><h3>📁 اختيار مجلدات كثيرة بدون ZIP</h3><p>اختار مجلد رئيسي كامل أو أضف عدة مجلدات موظفين منفصلة في نفس العملية.</p><form id="folderFilesForm" method="post" action="/documents/folders/import-files" enctype="multipart/form-data">{csrf_field(u)}<div id="folderInputs"><div class="folder-pick-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input class="folderPicker" type="file" name="folder_files" webkitdirectory directory multiple required style="flex:1"><button class="btn gray removeFolder" type="button" style="display:none">حذف</button></div></div><div class="actions" style="margin-top:10px"><button class="btn gray" id="addFolderPicker" type="button">➕ إضافة مجلد آخر</button><button class="btn gray" id="clearFolderPickers" type="button">مسح الاختيارات</button></div><div id="folderStatus" class="alert" style="margin-top:10px">يمكنك إضافة أكثر من مجلد ثم الضغط على استيراد مرة واحدة.</div><button class="btn" style="margin-top:12px">استيراد كل المجلدات المختارة</button></form><script>(function(){const box=document.getElementById("folderInputs"),status=document.getElementById("folderStatus");function refresh(){let files=0,rows=0;box.querySelectorAll(".folder-pick-row").forEach(function(r){rows++;const i=r.querySelector("input");files+=i.files.length;r.querySelector(".removeFolder").style.display=rows>1?"inline-block":"none";});status.textContent="المجلدات المضافة: "+rows+" · إجمالي الملفات: "+files;}document.getElementById("addFolderPicker").onclick=function(){const row=document.createElement("div");row.className="folder-pick-row";row.style="display:flex;gap:8px;align-items:center;margin-bottom:8px";row.innerHTML="<input class=\"folderPicker\" type=\"file\" name=\"folder_files\" webkitdirectory directory multiple style=\"flex:1\"><button class=\"btn gray removeFolder\" type=\"button\">حذف</button>";row.querySelector("input").onchange=refresh;row.querySelector(".removeFolder").onclick=function(){row.remove();refresh();};box.appendChild(row);};box.addEventListener("change",refresh);document.getElementById("clearFolderPickers").onclick=function(){box.querySelectorAll(".folder-pick-row").forEach(function(r,i){if(i===0)r.querySelector("input").value="";else r.remove();});refresh();};refresh();})();</script></div>\n</div><div class="card" style="margin-top:16px"><h3>تصدير</h3><div class="actions"><a class="btn gray" href="/export/employees">الموظفون</a><a class="btn gray" href="/export/leaves">الإجازات</a><a class="btn gray" href="/export/attendance">الحضور</a><a class="btn gray" href="/export/audit">سجل المراجعة</a></div></div>\nMISSING_DOCS_PLACEHOLDER\n<script>\n(function(){\n  const b=document.getElementById(\'pasteBox\'), p=document.getElementById(\'pastePreview\'), st=document.getElementById(\'pasteStatus\');\n  function esc(x){return String(x??\'\').replace(/[&<>"\']/g,function(m){return {\'&\':\'&amp;\',\'<\':\'&lt;\',\'>\':\'&gt;\',\'"\':\'&quot;\',"\'":\'&#39;\'}[m];});}\n  function render(){\n    const text=b.value.replace(/\\\\r/g,\'\');\n    const lines=text.split(\'\\\\n\').filter(function(x){return x.trim();});\n    if(!lines.length){p.innerHTML=\'\';st.style.display=\'none\';return;}\n    const rows=lines.slice(0,100).map(function(x){return x.split(\'\\\\t\');});\n    const m=Math.max.apply(null,rows.map(function(x){return x.length;}));\n    let h=\'<table class="table"><thead><tr>\';\n    for(let i=0;i<m;i++) h+=\'<th>عمود \'+(i+1)+\'</th>\';\n    h+=\'</tr></thead><tbody>\';\n    rows.forEach(function(x){h+=\'<tr>\';for(let i=0;i<m;i++)h+=\'<td contenteditable=\"true\" data-col=\"\'+i+\">\'+esc(x[i]||\'\')+\'</td>\';h+=\'<td><button type=\"button\" class=\"btn bad\" onclick=\"this.closest(\\\'tr\\\').remove()\">حذف</button></td></tr>\';});\n    h+=\'</tbody></table>\';p.innerHTML=h;\n    st.textContent=\'تم التقاط \'+lines.length+\' صف — اضغط على أي خلية لتعديلها، ويمكنك حذف أي صف قبل الاستيراد.\';st.style.display=\'block\';\n  }\n  b.addEventListener(\'input\',render); b.addEventListener(\'paste\',function(){setTimeout(render,50);});\n  b.closest(\'form\').addEventListener(\'submit\',function(){const table=p.querySelector(\'table\');if(!table)return;const rows=[...table.querySelectorAll(\'tbody tr\')];b.value=rows.map(tr=>[...tr.querySelectorAll(\'td[data-col]\')].map(td=>td.innerText.replace(/\\t/g,\' \').replace(/\\n/g,\' \').trim()).join(\'\\t\')).join(\'\\n\');});\n  document.getElementById(\'clearPaste\').addEventListener(\'click\',function(){b.value=\'\';p.innerHTML=\'\';st.style.display=\'none\';b.focus();});\n  document.getElementById(\'samplePaste\').addEventListener(\'click\',function(){b.value=\'\\\\tم\\\\tالإسم\\\\tالمجموعه الوظفيه\\\\tتاريخ الميلاد\\\\tالرقم القومى\\\\tالعنوان\\\\tالمؤهل\\\\tرقم التيلفون\\\\tipan\\\\tإسم البنك\\\\tإسم فرع البنك\\\\tالإدارة\\\\tالوحدة\\\\tالوظيفه\\\\tتاريخ التعاقد\\\\tمبلغ التعاقد\\\\n\\\\t1\\\\tموظف تجريبي\\\\tالتخصصيه\\\\t1990-01-01\\\\t29000000000000\\\\tدمياط\\\\tبكالوريوس\\\\t01000000000\\\\tEG0000000000000000000000000000\\\\tبنك مصر\\\\tدمياط الجديدة\\\\tالخدمات الطبية\\\\tمستشفى دمياط العسكرى\\\\tموظف\\\\t2026-01-01\\\\t5000\';render();b.focus();});\n})();\n</script>'
+        body = '<div class="top"><div class="title"><h1>مركز الاستيراد والتصدير</h1><p>يدعم نفس شيت الموظفين الأصلي: م، الإسم، المجموعة الوظيفية، الميلاد، الرقم القومي، العنوان، المؤهل، الهاتف، IPAN، البنك، الفرع، الإدارة، الوحدة، الوظيفة، التعاقد، مبلغ التعاقد</p></div><span class="badge b-blue" style="font-size:14px">V4.4 · PASTE READY</span></div>\n<div class="card" style="margin-bottom:16px;border:2px solid #84adff;background:linear-gradient(180deg,#fff,#f7fbff)">\n  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">\n    <div><h2 style="margin:0 0 6px">📋 لصق بيانات الموظفين من Excel</h2><p style="margin:0;color:#667085">انسخ الجدول من Excel ثم اضغط داخل المربع واضغط Ctrl+V. ستظهر البيانات هنا قبل الحفظ.</p></div>\n    <span class="badge b-blue">بدون Upload</span>\n  </div>\n  <form method="post" action="/import/employees/paste" style="margin-top:16px">'+csrf_field(u)+'\n    <div class="field full"><label>منطقة اللصق — اضغط هنا ثم Ctrl+V</label>\n      <textarea id="pasteBox" name="paste_data" rows="9" spellcheck="false" autocomplete="off" placeholder="الصق هنا صف العناوين + صفوف الموظفين من Excel..."></textarea>\n    </div>\n    <div id="pasteStatus" class="alert" style="display:none;margin-top:10px"></div>\n    <div id="pastePreview" class="table-wrap" style="margin-top:12px;max-height:340px;overflow:auto"></div>\n    <div class="actions" style="margin-top:12px">\n      <button class="btn ok" type="submit">استيراد البيانات الملصوقة</button>\n      <button class="btn gray" type="button" id="clearPaste">مسح</button>\n      <button class="btn gray" type="button" id="samplePaste">إدخال مثال</button>\n    </div>\n  </form>\n</div>\n<div class="grid g3">\n<div class="card"><h3>استيراد ملف Excel</h3><p>يدعم XLSX / XLSM ويكتشف ورقة الموظفين والأعمدة العربية أو الإنجليزية.</p><form method="post" action="/import/employees" enctype="multipart/form-data" id="xlsxDropForm">{csrf_field(u)}<div id="xlsxDropZone" style="border:2px dashed #98a2b3;border-radius:10px;padding:18px;text-align:center;color:#667085;cursor:pointer;background:#fbfcfe">📥 اسحب ملف Excel هنا أو اضغط للاختيار<div id="xlsxDropName" style="margin-top:6px;font-weight:600;color:#175cd3"></div></div><input type="file" name="file" id="xlsxFileInput" accept=".xlsx,.xlsm" required style="display:none"><button class="btn" style="margin-top:12px">استيراد الموظفين</button></form><div class="actions" style="margin-top:10px"><a class="btn gray" href="/template/employees">تحميل Template</a></div><script>(function(){{const z=document.getElementById("xlsxDropZone"),i=document.getElementById("xlsxFileInput"),n=document.getElementById("xlsxDropName");z.addEventListener("click",()=>i.click());z.addEventListener("dragover",e=>{{e.preventDefault();z.style.background="#eef4ff"}});z.addEventListener("dragleave",()=>{{z.style.background="#fbfcfe"}});z.addEventListener("drop",e=>{{e.preventDefault();z.style.background="#fbfcfe";if(e.dataTransfer.files.length){{i.files=e.dataTransfer.files;n.textContent=i.files[0].name}}}});i.addEventListener("change",()=>{{if(i.files.length)n.textContent=i.files[0].name}});}})();</script></div>\n<div class="card"><h3>استيراد الحضور</h3><p>التاريخ + كود الموظف، مع الحضور والانصراف والتأخير والإضافي.</p><form method="post" action="/attendance/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".xlsx,.xlsm,.csv" required><button class="btn" style="margin-top:12px">استيراد الحضور</button></form></div>\n<div class="card"><h3>استيراد مجلدات الموظفين (ZIP)</h3><p>ZIP فيه مجلد لكل موظف — اسم المجلد بالاسم أو الكود، يترّبط تلقائيًا. الملفات المؤكدة تتوزع فورًا على تصنيفات المستندات وتظهر في تتبع الناقص تحت.</p><form method="post" action="/documents/folders/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".zip" required><button class="btn" style="margin-top:12px">استيراد ZIP المجلدات</button></form></div>\n<div class="card"><h3>📁 اختيار مجلدات كثيرة بدون ZIP</h3><p>اختار مجلد رئيسي كامل أو أضف عدة مجلدات موظفين منفصلة في نفس العملية.</p><form id="folderFilesForm" method="post" action="/documents/folders/import-files" enctype="multipart/form-data">{csrf_field(u)}<div id="folderInputs"><div class="folder-pick-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input class="folderPicker" type="file" name="folder_files" webkitdirectory directory multiple required style="flex:1"><button class="btn gray removeFolder" type="button" style="display:none">حذف</button></div></div><div class="actions" style="margin-top:10px"><button class="btn gray" id="addFolderPicker" type="button">➕ إضافة مجلد آخر</button><button class="btn gray" id="clearFolderPickers" type="button">مسح الاختيارات</button></div><div id="folderStatus" class="alert" style="margin-top:10px">يمكنك إضافة أكثر من مجلد ثم الضغط على استيراد مرة واحدة.</div><button class="btn" style="margin-top:12px">استيراد كل المجلدات المختارة</button></form><script>(function(){const box=document.getElementById("folderInputs"),status=document.getElementById("folderStatus");function refresh(){let files=0,rows=0;box.querySelectorAll(".folder-pick-row").forEach(function(r){rows++;const i=r.querySelector("input");files+=i.files.length;r.querySelector(".removeFolder").style.display=rows>1?"inline-block":"none";});status.textContent="المجلدات المضافة: "+rows+" · إجمالي الملفات: "+files;}document.getElementById("addFolderPicker").onclick=function(){const row=document.createElement("div");row.className="folder-pick-row";row.style="display:flex;gap:8px;align-items:center;margin-bottom:8px";row.innerHTML="<input class=\"folderPicker\" type=\"file\" name=\"folder_files\" webkitdirectory directory multiple style=\"flex:1\"><button class=\"btn gray removeFolder\" type=\"button\">حذف</button>";row.querySelector("input").onchange=refresh;row.querySelector(".removeFolder").onclick=function(){row.remove();refresh();};box.appendChild(row);};box.addEventListener("change",refresh);document.getElementById("clearFolderPickers").onclick=function(){box.querySelectorAll(".folder-pick-row").forEach(function(r,i){if(i===0)r.querySelector("input").value="";else r.remove();});refresh();};refresh();})();</script></div>\n</div><div class="card" style="margin-top:16px"><h3>تصدير</h3><div class="actions"><a class="btn gray" href="/export/employees">الموظفون</a><a class="btn gray" href="/export/leaves">الإجازات</a><a class="btn gray" href="/export/attendance">الحضور</a><a class="btn gray" href="/export/audit">سجل المراجعة</a></div></div>\nMISSING_DOCS_PLACEHOLDER\n<script>\n(function(){\n  const b=document.getElementById(\'pasteBox\'), p=document.getElementById(\'pastePreview\'), st=document.getElementById(\'pasteStatus\');\n  function esc(x){return String(x??\'\').replace(/[&<>"\']/g,function(m){return {\'&\':\'&amp;\',\'<\':\'&lt;\',\'>\':\'&gt;\',\'"\':\'&quot;\',"\'":\'&#39;\'}[m];});}\n  function render(){\n    const text=b.value.replace(/\\\\r/g,\'\');\n    const lines=text.split(\'\\\\n\').filter(function(x){return x.trim();});\n    if(!lines.length){p.innerHTML=\'\';st.style.display=\'none\';return;}\n    const rows=lines.slice(0,100).map(function(x){return x.split(\'\\\\t\');});\n    const m=Math.max.apply(null,rows.map(function(x){return x.length;}));\n    let h=\'<table class="table"><thead><tr>\';\n    for(let i=0;i<m;i++) h+=\'<th>عمود \'+(i+1)+\'</th>\';\n    h+=\'</tr></thead><tbody>\';\n    rows.forEach(function(x){h+=\'<tr>\';for(let i=0;i<m;i++)h+=\'<td contenteditable=\"true\" data-col=\"\'+i+\">\'+esc(x[i]||\'\')+\'</td>\';h+=\'<td><button type=\"button\" class=\"btn bad\" onclick=\"this.closest(\\\'tr\\\').remove()\">حذف</button></td></tr>\';});\n    h+=\'</tbody></table>\';p.innerHTML=h;\n    st.textContent=\'تم التقاط \'+lines.length+\' صف — اضغط على أي خلية لتعديلها، ويمكنك حذف أي صف قبل الاستيراد.\';st.style.display=\'block\';\n  }\n  b.addEventListener(\'input\',render); b.addEventListener(\'paste\',function(){setTimeout(render,50);});\n  b.closest(\'form\').addEventListener(\'submit\',function(){const table=p.querySelector(\'table\');if(!table)return;const rows=[...table.querySelectorAll(\'tbody tr\')];b.value=rows.map(tr=>[...tr.querySelectorAll(\'td[data-col]\')].map(td=>td.innerText.replace(/\\t/g,\' \').replace(/\\n/g,\' \').trim()).join(\'\\t\')).join(\'\\n\');});\n  document.getElementById(\'clearPaste\').addEventListener(\'click\',function(){b.value=\'\';p.innerHTML=\'\';st.style.display=\'none\';b.focus();});\n  document.getElementById(\'samplePaste\').addEventListener(\'click\',function(){b.value=\'\\\\tم\\\\tالإسم\\\\tالمجموعه الوظفيه\\\\tتاريخ الميلاد\\\\tالرقم القومى\\\\tالعنوان\\\\tالمؤهل\\\\tرقم التيلفون\\\\tipan\\\\tإسم البنك\\\\tإسم فرع البنك\\\\tالإدارة\\\\tالوحدة\\\\tالوظيفه\\\\tتاريخ التعاقد\\\\tمبلغ التعاقد\\\\n\\\\t1\\\\tموظف تجريبي\\\\tالتخصصيه\\\\t1990-01-01\\\\t29000000000000\\\\tدمياط\\\\tبكالوريوس\\\\t01000000000\\\\tEG0000000000000000000000000000\\\\tبنك مصر\\\\tدمياط الجديدة\\\\tالخدمات الطبية\\\\tمستشفى دمياط العسكرى\\\\tموظف\\\\t2026-01-01\\\\t5000\';render();b.focus();});\n})();\n</script>'
         body += r'''<script>
 (function(){
   const p=document.getElementById('pastePreview'); if(!p) return;
@@ -1793,34 +1914,32 @@ class H(BaseHTTPRequestHandler):
         self.send(page('استيراد المجلدات',f'<div class="card"><h2>تم استيراد المجلدات</h2><p>مجلدات مرتبطة: <b>{matched}</b> · ملفات: <b>{imported}</b> · غير صالحة: <b>{invalid}</b></p><h3>المراجعة</h3><ul>{review_html}</ul><a class="btn" href="/import">العودة لمركز الاستيراد</a></div>',u,'import'))
 
     def do_import_employees(self,u):
+        # SAFETY: Upload Excel / CSV / Drag & Drop must NEVER commit directly.
+        # Parse only, then hand off to the shared Preview/Validate/Confirm pipeline
+        # (the same one used by paste and Excel Center Pro) — see _render_import_preview.
         fields,file_part=self.parse_upload(); head,data,fname=file_part
         if not data:return self.redirect('/import')
-        is_csv = b'.csv' in head.lower() or b'text/csv' in head.lower()
+        is_csv = b'.csv' in head.lower() or b'text/csv' in head.lower() or fname.lower().endswith('.csv')
         tmp=os.path.join(DATA,'_upload.'+('csv' if is_csv else 'xlsx'));open(tmp,'wb').write(data)
         try:
             if is_csv:
                 text=data.decode('utf-8-sig',errors='replace'); rows=list(csv.reader(io.StringIO(text)))
-                hi,idx=find_hospital_header(rows)
-                if hi is None: raise ValueError('CSV لا يحتوي على صف عناوين معروف.')
-                records=[hospital_row_to_record(r,idx) for r in rows[hi+1:] if looks_like_hospital_employee(hospital_row_to_record(r,idx))]
-                valid,errors=validate_employee_records(records); 
-                if errors:
-                    os.remove(tmp); return self.send(page('Import Validation', '<div class="card"><h2>🔴 لم يتم إدخال أي سجل</h2><p>الاستيراد الآن Atomic: يجب إصلاح كل الأخطاء ثم إعادة المحاولة.</p><pre>'+esc(json.dumps(errors,ensure_ascii=False,indent=2))+'</pre></div>',u,'import'),400)
-                new,upd,skip=upsert_hospital_records(valid,u,'CSV'); os.remove(tmp)
-                return self.send(page('تم الفحص',f'<div class="card"><h2>تم فحص CSV</h2><p>الإجمالي: <b>{len(records)}</b> · صالح: <b>{len(valid)}</b> · أخطاء: <b>{len(errors)}</b> · جديد: <b>{new}</b> · تحديث: <b>{upd}</b></p><a class="btn" href="/employees">عرض الموظفين</a></div>',u,'import'))
+                os.remove(tmp)
+                return _render_import_preview(self,u,rows)
+            if not validate_file_signature(fname,data):
+                os.remove(tmp); raise ValueError('نوع الملف غير صالح أو تالف.')
             wb=load_workbook(tmp,read_only=True,data_only=True,keep_vba=True)
-            selected=None;header_idx=None;idx=None
+            selected=None
             for ws in wb.worksheets:
-                rows=list(ws.iter_rows(min_row=1,max_row=min(ws.max_row or 1,40),values_only=True))
-                hi,hidx=find_hospital_header(rows)
-                if hi is not None:selected,header_idx,idx=ws,hi,hidx;break
-            if selected is None:wb.close();raise ValueError('لم يتم العثور على شيت الموظفين. ارفع نفس الملف الأصلي بدون تعديل.')
-            records=[]
-            for r in selected.iter_rows(min_row=header_idx+2,values_only=True):
-                rec=hospital_row_to_record(r,idx)
-                if looks_like_hospital_employee(rec):records.append(rec)
-            sheet_name=selected.title;wb.close(); valid,errors=validate_employee_records(records); new,upd,skip=upsert_hospital_records(valid,u,'Excel');os.remove(tmp)
-            return self.send(page('تم الفحص',f'<div class="card"><h2>تم فحص شيت الموظفين بنجاح</h2><p>الشيت: <b>{esc(sheet_name)}</b> · الصفوف: <b>{len(records)}</b> · صالح: <b>{len(valid)}</b> · أخطاء: <b>{len(errors)}</b></p><p>جديد: <b>{new}</b> · تحديث: <b>{upd}</b> · لم يُقبل: <b>{skip}</b></p><a class="btn" href="/employees">عرض الموظفين</a></div>',u,'import'))
+                scan=list(ws.iter_rows(min_row=1,max_row=min(ws.max_row or 1,40),values_only=True))
+                hi,_=find_hospital_header(scan)
+                if hi is not None:selected=ws;break
+            if selected is None:
+                wb.close();os.remove(tmp)
+                raise ValueError('لم يتم العثور على شيت الموظفين. ارفع نفس الملف الأصلي بدون تعديل.')
+            rows=list(selected.iter_rows(min_row=1,max_row=selected.max_row or 1,values_only=True))
+            wb.close(); os.remove(tmp)
+            return _render_import_preview(self,u,rows)
         except Exception as e:
             if os.path.exists(tmp):os.remove(tmp)
             return self.send(page('خطأ في الاستيراد',f'<div class="card"><div class="alert">{esc(e)}</div><p>ارفع نفس ملف Excel الأصلي كما هو؛ لا تحتاج لتغيير الأعمدة أو اسم الشيت.</p></div>',u,'import'),400)
@@ -2642,11 +2761,22 @@ def _excel_grid_page(self,u):
     if not self.need(u,'employees.edit'): return
     headers=['Employee Code','Name','Department','Unit','Job','National ID','Phone','Email','Contract Date','Contract Amount']
     hdr=json.dumps(headers,ensure_ascii=False)
-    body=f'''<div class="top"><div class="title"><h1>📊 Excel Center Pro</h1><p>Excel-like paste/edit/validate/import — بدون رفع ملف.</p></div><div class="actions"><a class="btn gray" href="/import">Classic Import</a><button class="btn" type="button" id="pasteBtn">Paste from Clipboard</button></div></div>
+    body=f'''<div class="top"><div class="title"><h1>📊 Excel Center Pro — مركز الاستيراد</h1><p>كل مصادر بيانات الموظفين (رفع ملف Excel، لصق، سحب وإفلات) تمر بنفس مرحلة المعاينة والفحص قبل أي حفظ.</p></div><div class="actions"><a class="btn gray" href="/template/employees">تحميل Template</a><button class="btn" type="button" id="pasteBtn">Paste from Clipboard</button></div></div>
+    <div class="card" style="margin-bottom:16px">
+      <h3>📥 رفع ملف Excel / سحب وإفلات</h3>
+      <p style="color:#667085">يدعم XLSX/XLSM/CSV. سيتم فحص الملف وعرض النتائج في شاشة معاينة قبل أي حفظ — لن يتم حفظ أي بيانات مباشرة.</p>
+      <form method="post" action="/import/employees" enctype="multipart/form-data" id="xlsxDropForm">{csrf_field(u)}<div id="xlsxDropZone" style="border:2px dashed #98a2b3;border-radius:10px;padding:18px;text-align:center;color:#667085;cursor:pointer;background:#fbfcfe">📥 اسحب ملف Excel/CSV هنا أو اضغط للاختيار<div id="xlsxDropName" style="margin-top:6px;font-weight:600;color:#175cd3"></div></div><input type="file" name="file" id="xlsxFileInput" accept=".xlsx,.xlsm,.csv" required style="display:none"><button class="btn" style="margin-top:12px">فحص الملف → معاينة</button></form>
+      <script>(function(){{const z=document.getElementById("xlsxDropZone"),i=document.getElementById("xlsxFileInput"),n=document.getElementById("xlsxDropName"),frm=document.getElementById("xlsxDropForm");z.addEventListener("click",()=>i.click());z.addEventListener("dragover",e=>{{e.preventDefault();z.style.background="#eef4ff"}});z.addEventListener("dragleave",()=>{{z.style.background="#fbfcfe"}});z.addEventListener("drop",e=>{{e.preventDefault();z.style.background="#fbfcfe";if(e.dataTransfer.files.length){{i.files=e.dataTransfer.files;n.textContent=i.files[0].name;frm.submit();}}}});i.addEventListener("change",()=>{{if(i.files.length){{n.textContent=i.files[0].name;frm.submit();}}}});}})();</script>
+    </div>
     <div class="card"><div class="toolbar"><input id="gridSearch" placeholder="Search in grid…"><button class="btn gray" type="button" id="addRow">+ Add Row</button><button class="btn gray" type="button" id="delRow">Delete Selected</button><button class="btn gray" type="button" id="fillDown">Fill Down</button><button class="btn gray" type="button" id="undo">Undo</button><button class="btn gray" type="button" id="redo">Redo</button><button class="btn gray" type="button" id="clear">Clear</button></div>
-    <div class="alert">Ctrl+V = multi-cell paste · Ctrl+D = Fill Down · Delete = clear cell · Ctrl+Z / Ctrl+Y = Undo/Redo. 🔴 invalid · 🟡 warning · 🟢 valid.</div>
+    <div class="alert">الصق من Excel هنا مباشرة (Ctrl+V) ثم اضغط Validate All → Preview. Ctrl+D = Fill Down · Delete = clear cell · Ctrl+Z / Ctrl+Y = Undo/Redo. 🔴 invalid · 🟡 warning · 🟢 valid.</div>
     <div id="grid" class="table-wrap" style="max-height:540px;margin-top:14px"></div>
     <form id="gridForm" method="post" action="/import/employees/paste/preview">{csrf_field(u)}<textarea id="payload" name="paste_data" hidden></textarea><div class="actions" style="margin-top:14px"><button class="btn ok" type="submit">Validate All → Preview</button></div></form></div>
+    <div class="grid g3" style="margin-top:16px">
+    <div class="card"><h3>استيراد الحضور</h3><p>التاريخ + كود الموظف، مع الحضور والانصراف والتأخير والإضافي.</p><form method="post" action="/attendance/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".xlsx,.xlsm,.csv" required><button class="btn" style="margin-top:12px">استيراد الحضور</button></form></div>
+    <div class="card"><h3>استيراد مجلدات الموظفين (ZIP)</h3><p>ZIP فيه مجلد لكل موظف — يتربط تلقائيًا بالاسم أو الكود.</p><form method="post" action="/documents/folders/import" enctype="multipart/form-data">{csrf_field(u)}<input type="file" name="file" accept=".zip" required><button class="btn" style="margin-top:12px">استيراد ZIP</button></form></div>
+    <div class="card"><h3>تصدير</h3><div class="actions"><a class="btn gray" href="/export/employees">الموظفون</a><a class="btn gray" href="/export/leaves">الإجازات</a><a class="btn gray" href="/export/attendance">الحضور</a><a class="btn gray" href="/export/audit">سجل المراجعة</a></div></div>
+    </div>
     <script>
     const HEADERS={hdr}; let data=[HEADERS,Array(HEADERS.length).fill('')]; let selected=null,undoStack=[],redoStack=[];
     const grid=document.getElementById('grid');
@@ -2670,27 +2800,108 @@ def _excel_grid_page(self,u):
 def _paste_preview(self,u,f):
     text=f.get('paste_data',''); raw=[x for x in text.replace('\r','').split('\n') if x.strip()]
     if not raw: return self.send(page('Import Preview','<div class="card"><div class="alert">لا توجد بيانات.</div></div>',u,'import'),400)
-    rows=[x.split('\t') for x in raw]; header_idx,idx=find_hospital_header(rows)
+    rows=[x.split('\t') for x in raw]
+    return _render_import_preview(self,u,rows)
+
+
+def _render_import_preview(self,u,rows):
+    """Single shared Preview/Validate stage for EVERY employee-import source
+    (Upload Excel, Excel Copy/Paste, Drag & Drop). Never commits directly."""
+    if not rows: return self.send(page('Import Preview','<div class="card"><div class="alert">لا توجد بيانات.</div></div>',u,'import'),400)
+    header_idx,idx=find_hospital_header(rows)
     if header_idx is None:
         if max(len(r) for r in rows)<8: return self.send(page('Import Validation','<div class="card"><div class="alert">لم أتعرف على أعمدة الموظفين.</div></div>',u,'import'),400)
         idx={field:i for i,field in enumerate(HOSPITAL_FIELDS)}; data_rows=rows
     else: data_rows=rows[header_idx+1:]
-    records=[hospital_row_to_record(r,idx) for r in data_rows]; valid,errors=validate_employee_records(records)
-    token=secrets.token_urlsafe(18); V9_PREVIEWS[token]={'user':u['username'],'created':time.time(),'records':valid,'errors':errors,'rows':len(records)}
+    records=[hospital_row_to_record(r,idx) for r in data_rows]; ready,warnings,errors=validate_employee_records(records)
+    duplicates=build_duplicate_rows(ready)
+    token=secrets.token_urlsafe(18); V9_PREVIEWS[token]={'user':u['username'],'created':time.time(),'records':ready,'warnings':warnings,'errors':errors,'rows':len(records),'duplicates':duplicates}
+    mapping_html=mapping_preview_html(rows,header_idx,idx)
+    warnhtml=''.join(f'<tr><td>{w[0]}</td><td>{esc(w[1])}</td><td>{esc(w[2])}</td></tr>' for w in warnings[:200])
     errhtml=''.join(f'<tr><td>{e[0]}</td><td>{esc(e[1])}</td><td>{esc(e[2])}</td></tr>' for e in errors[:200])
-    body=f'''<div class="top"><div class="title"><h1>🔎 Import Preview</h1><p>لم يتم إدخال أي سجل بعد. راجع النتائج ثم Confirm.</p></div><a class="btn gray" href="/import/excel-grid">Back to Grid</a></div><div class="grid g4"><div class="card metric"><div class="label">Total Rows</div><div class="value">{len(records)}</div></div><div class="card metric"><div class="label">Valid</div><div class="value">{len(valid)}</div></div><div class="card metric"><div class="label">Errors</div><div class="value">{len(errors)}</div></div><div class="card metric"><div class="label">Status</div><div class="value" style="font-size:22px">{'BLOCKED' if errors else 'READY'}</div></div></div>'''
-    if errors: body+=f'<div class="card" style="margin-top:16px"><h3>🔴 Validation Errors</h3><table class="table"><thead><tr><th>Row</th><th>Field</th><th>Message</th></tr></thead><tbody>{errhtml}</tbody></table><div class="actions" style="margin-top:12px"><a class="btn bad" href="/export/import-errors/{quote(token)}">Export Errors</a><a class="btn gray" href="/import/excel-grid">Fix Data</a></div></div>'
-    else: body+=f'<div class="card" style="margin-top:16px"><h3>🟢 Ready to Commit</h3><p>{len(valid)} records passed validation.</p><form method="post" action="/import/employees/paste/commit">{csrf_field(u)}<input type="hidden" name="token" value="{token}"><button class="btn ok">Confirm & Atomic Commit</button> <a class="btn gray" href="/import/excel-grid">Cancel</a></form></div>'
+    body=f'''<div class="top"><div class="title"><h1>🔎 Import Preview</h1><p>راجع النتائج ثم استورد السجلات الجاهزة — لن يتم حظر باقي الملف بسبب صفوف قليلة.</p></div><a class="btn gray" href="/import/excel-grid">Back to Grid</a></div><div class="grid g4"><div class="card metric"><div class="label">Total Rows</div><div class="value">{len(records)}</div></div><div class="card metric"><div class="label">Ready</div><div class="value">{len(ready)}</div></div><div class="card metric"><div class="label">Warnings</div><div class="value">{len(warnings)}</div></div><div class="card metric"><div class="label">Need Attention</div><div class="value">{len(errors)}</div></div></div>'''
+    body+=mapping_html
+    dup_html=''
+    if duplicates:
+        rows_html=''
+        for d in duplicates:
+            gid=esc(d['emp_code'])
+            changed_html=''.join(f'<div><b>{esc(l)}</b>: <span style="color:#98a2b3;text-decoration:line-through">{esc(o) or "—"}</span> → <span style="color:#175cd3">{esc(n)}</span></div>' for l,o,n in d['changed']) or '<span style="color:#667085">لا فروقات في البيانات</span>'
+            rows_html+=f'''<tr>
+              <td>{d["row"]}</td>
+              <td><b>{esc(d["incoming_name"])}</b><br><span style="color:#667085">كود: {gid}</span></td>
+              <td>{esc(d["existing_name"])}</td>
+              <td style="font-size:13px">{changed_html}</td>
+              <td>
+                <label style="display:block"><input type="radio" name="dup_{gid}" value="update" class="dupradio dupradio-update" checked> تحديث الموجود</label>
+                <label style="display:block"><input type="radio" name="dup_{gid}" value="skip" class="dupradio dupradio-skip"> تجاهل (Skip)</label>
+                <label style="display:block"><input type="radio" name="dup_{gid}" value="new" class="dupradio dupradio-new"> إنشاء كموظف جديد</label>
+              </td>
+            </tr>'''
+        dup_html=f'''<div class="card" style="margin-top:16px;border:2px solid #f79009">
+          <h3>🟠 {len(duplicates)} Duplicate(s) — كود موجود بالفعل في قاعدة البيانات</h3>
+          <p style="color:#667085">لن يتم التحديث تلقائيًا بصمت — اختر إجراء كل صف، أو طبّق إجراء واحد على الكل.</p>
+          <div class="actions" style="margin-bottom:10px">
+            <button type="button" class="btn gray" onclick="document.querySelectorAll('.dupradio-update').forEach(r=>r.checked=true)">تحديث الكل</button>
+            <button type="button" class="btn gray" onclick="document.querySelectorAll('.dupradio-skip').forEach(r=>r.checked=true)">تجاهل الكل</button>
+            <button type="button" class="btn gray" onclick="document.querySelectorAll('.dupradio-new').forEach(r=>r.checked=true)">إنشاء الكل كموظفين جدد</button>
+          </div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Row</th><th>الوارد</th><th>الموجود بالفعل</th><th>الفروقات</th><th>الإجراء</th></tr></thead><tbody>{rows_html}</tbody></table></div>
+        </div>'''
+    idrev_html=''
+    idrev_rows=[(i,rec) for i,rec in enumerate(ready,1) if rec.get('_id_auto_generated')]
+    if idrev_rows:
+        rows_html=''.join(f'''<tr>
+              <td>{i}</td>
+              <td>{esc(rec.get("name",""))}</td>
+              <td><input type="text" name="empid_{i}" value="{esc(rec['emp_code'])}" style="width:140px" class="idrev-input" data-row="{i}"></td>
+              <td><label style="display:block;white-space:nowrap"><input type="checkbox" name="empid_skip_{i}" value="1" class="idrev-skip" data-row="{i}"> تجاهل هذا الصف</label></td>
+            </tr>''' for i,rec in idrev_rows)
+        idrev_html=f'''<div class="card" style="margin-top:16px;border:2px solid #7f56d9">
+          <h3>🆔 {len(idrev_rows)} Employee ID(s) Auto-Generated — راجع أو عدّل قبل الاستيراد</h3>
+          <p style="color:#667085">هذه الصفوف كانت بدون كود موظف فتم توليد كود تلقائي مؤقت. يمكنك قبوله كما هو، تعديله يدويًا، أو تجاهل الصف بالكامل.</p>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Row</th><th>الاسم</th><th>الكود (قابل للتعديل)</th><th>تجاهل</th></tr></thead><tbody>{rows_html}</tbody></table></div>
+        </div>'''
+    if ready: body+=f'<div class="card" style="margin-top:16px"><h3>🟢 {len(ready)} Records Ready to Import</h3><p>هذه السجلات صالحة (أو تم إصلاحها تلقائيًا) ويمكن استيرادها الآن، بغض النظر عن أي صفوف تانية محتاجة مراجعة.</p><form method="post" action="/import/employees/paste/commit">{csrf_field(u)}<input type="hidden" name="token" value="{token}">{idrev_html}{dup_html}<div class="actions" style="margin-top:14px"><button class="btn ok">Import {len(ready)} Valid Records</button> <a class="btn gray" href="/import/excel-grid">Cancel</a></div></form></div>'
+    if warnings: body+=f'<div class="card" style="margin-top:16px"><h3>🟡 Warnings ({len(warnings)}) — سيتم استيرادها مع ملاحظة</h3><table class="table"><thead><tr><th>Row</th><th>Field</th><th>Message</th></tr></thead><tbody>{warnhtml}</tbody></table></div>'
+    if errors: body+=f'<div class="card" style="margin-top:16px"><h3>🔴 Need Attention ({len(errors)}) — لن تُستورد إلا بعد التصحيح</h3><table class="table"><thead><tr><th>Row</th><th>Field</th><th>Message</th></tr></thead><tbody>{errhtml}</tbody></table><div class="actions" style="margin-top:12px"><a class="btn gray" href="/import/excel-grid">Fix Data & Re-validate</a></div></div>'
+    if not ready and not errors: body+=f'<div class="card" style="margin-top:16px"><div class="alert">لا توجد صفوف يمكن التعرف عليها للاستيراد.</div></div>'
     self.send(page('Import Preview',body,u,'import'))
 
 
 def _paste_commit(self,u,f):
     tok=f.get('token',''); x=V9_PREVIEWS.get(tok)
     if not x or x['user']!=u['username'] or time.time()-x['created']>900: return self.send(page('Import','<div class="card"><div class="alert">Preview انتهت صلاحيتها. أعد Validate.</div></div>',u,'import'),400)
-    if x['errors']: return self.send(page('Import','<div class="card"><div class="alert">لا يمكن Commit مع أخطاء.</div></div>',u,'import'),400)
-    new,upd,skip=upsert_hospital_records(x['records'],u,'Excel Center Pro'); del V9_PREVIEWS[tok]
-    audit(u['username'],u['role'],'Atomic employee import','Employees',str(x['rows']),f'new={new},updated={upd},skipped={skip}')
-    self.send(page('Import Complete',f'<div class="card"><h2>✅ Atomic Import Complete</h2><p>Rows: {x["rows"]} · New: {new} · Updated: {upd} · Skipped: {skip}</p><a class="btn" href="/employees">Employees</a></div>',u,'import'))
+    if not x['records']: return self.send(page('Import','<div class="card"><div class="alert">لا توجد سجلات جاهزة للاستيراد.</div></div>',u,'import'),400)
+    # Per-row Employee-ID review: apply Accept(unchanged)/Edit/Skip decisions made on the Preview page
+    # for rows whose ID was auto-generated. Rows not shown in that section pass through untouched.
+    final_records=[]; id_skipped=0; id_edited=0
+    for i,rec in enumerate(x['records'],1):
+        if rec.get('_id_auto_generated'):
+            if f.get(f'empid_skip_{i}'): id_skipped+=1; continue
+            new_code=(f.get(f'empid_{i}','') or '').strip()
+            if new_code and new_code!=rec['emp_code']: rec=dict(rec); rec['emp_code']=new_code; id_edited+=1
+        final_records.append(rec)
+    dup_codes={d['emp_code'] for d in x.get('duplicates',[])}
+    actions={code:f.get(f'dup_{code}','update') for code in dup_codes}
+    new,upd,skip=upsert_hospital_records(final_records,u,'Excel Center Pro',actions); warn_n=len(x.get('warnings',[])); errors=x.get('errors',[]); err_n=len(errors)
+    # Persist the "Need Attention" rows so they can be reviewed/exported after this preview token is gone.
+    run_id=None
+    if errors:
+        c=db()
+        cur=c.execute('INSERT INTO import_runs(source,file_name,created_at,created_by,status,records,details) VALUES(?,?,?,?,?,?,?)',('Excel Center Pro','',now(),u['username'],'completed_with_errors',x['rows'],f'new={new},updated={upd}'))
+        run_id=cur.lastrowid
+        for row_no,field,message,rec in errors:
+            c.execute('INSERT INTO import_errors(run_id,row_no,field,message,raw_json) VALUES(?,?,?,?,?)',(run_id,row_no,field,message,json.dumps(rec,ensure_ascii=False,default=str)))
+        c.commit(); c.close()
+    del V9_PREVIEWS[tok]
+    skip_dup_n=sum(1 for v in actions.values() if v=='skip'); new_dup_n=sum(1 for v in actions.values() if v=='new')
+    audit(u['username'],u['role'],'Employee import','Employees',str(x['rows']),f'new={new},updated={upd},skipped_db={skip},warnings={warn_n},need_attention={err_n},duplicates={len(dup_codes)},dup_skipped={skip_dup_n},dup_created_as_new={new_dup_n},id_review_skipped={id_skipped},id_review_edited={id_edited}')
+    leftover=f' · صفوف تحتاج مراجعة يدوية لم تُستورد: {err_n}' if err_n else ''
+    dupline=f' · Duplicates: {len(dup_codes)} (Updated: {len(dup_codes)-skip_dup_n-new_dup_n}, Skipped: {skip_dup_n}, Created as new: {new_dup_n})' if dup_codes else ''
+    idline=f' · Employee ID review: {id_edited} edited, {id_skipped} skipped' if (id_edited or id_skipped) else ''
+    errbtn=f' <a class="btn gray" href="/export/import-errors/{run_id}">📤 Export Error Report</a> <a class="btn gray" href="/import/errors/{run_id}">View Errors</a>' if run_id else ''
+    self.send(page('Import Complete',f'<div class="card"><h2>✅ Import Complete</h2><p>Rows: {x["rows"]} · New: {new} · Updated: {upd} · Warnings: {warn_n}{dupline}{idline}{leftover}</p><div class="actions" style="margin-top:12px"><a class="btn" href="/employees">Employees</a>{errbtn}</div></div>',u,'import'))
 
 
 def _discovery_page(self,u):
@@ -2778,6 +2989,9 @@ _v10fp.install_v10(globals())
 # V11 practical completion layer
 import v11_completion as _v11
 _v11.install_v11(globals())
+# Final completion layer: QR identity, ID cards, contracts, training and evaluation workflows.
+import hr_completion as _hrc
+_hrc.install_completion(globals())
 
 if __name__=='__main__':main()
 

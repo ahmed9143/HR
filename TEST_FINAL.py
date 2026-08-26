@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='hr75test_') as td:
             try:
                 health=json.load(urllib.request.urlopen('http://127.0.0.1:8906/health',timeout=1)); break
             except Exception: time.sleep(.2)
-        assert health and health['ok'] and health['version'].startswith('8.2'), health
+        assert health and health['ok'] and health['version'].startswith('12.'), health
         assert 'database' not in health and 'storage' not in health, health
         con=sqlite3.connect(pathlib.Path(td)/'hr_central.db')
         con.execute("UPDATE users SET must_change_password=0 WHERE username='admin'")
@@ -57,6 +57,15 @@ with tempfile.TemporaryDirectory(prefix='hr75test_') as td:
 
         assert 'T100' in op.open('http://127.0.0.1:8906/export/html/employees').read().decode('utf-8')
         csvraw=op.open('http://127.0.0.1:8906/export/csv/employees').read().decode('utf-8-sig'); assert 'T100' in csvraw
-        print('PASS: syntax, one-click package assets, public health, login, admin health, diagnostics, folder picker, HTML export, CSV export, real employee data')
+        # Final completion smoke: QR, ID cards, Contracts, Training, Evaluations.
+        assert 'QR Identity' in op.open('http://127.0.0.1:8906/qr/profile/T100').read().decode('utf-8')
+        assert op.open('http://127.0.0.1:8906/qr/image/T100').read(8)==bytes.fromhex('89504E470D0A1A0A')
+        assert 'EMPLOYEE ID CARD' in op.open('http://127.0.0.1:8906/id-card/T100').read().decode('utf-8')
+        assert op.open('http://127.0.0.1:8906/id-cards.pdf?codes=T100').read(4)==b'%PDF'
+        assert 'العقود' in op.open('http://127.0.0.1:8906/contracts').read().decode('utf-8')
+        assert 'التدريب' in op.open('http://127.0.0.1:8906/training').read().decode('utf-8')
+        assert 'التقييمات' in op.open('http://127.0.0.1:8906/evaluations').read().decode('utf-8')
+        print('PASS: syntax, startup, login, core routes, Excel regression assets, exports, QR identity, ID cards, contracts, training, evaluations')
+
     finally:
         p.terminate(); p.wait(timeout=5)
