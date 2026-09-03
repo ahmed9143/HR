@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+build/
+dist/
+installer/
+*.spec
+.env
+.venv/
+data/hr_central.db
+data/server_identity.json
+data/logs/*
+data/backups/*
+data/employee_files/*
+data/branding/*
+branding/.qr_tokens/
+
+# Real employee PII — never allowed in the repo. Only the sanitized *_Demo.* files
+# under DEMO_DATA are safe to commit (fake/sample data). Anything containing the
+# real 109-employee export (national IDs, IBANs, salaries) must stay out of git.
+DEMO_DATA/Employees_UPLOAD_READY_109.xlsx
+DEMO_DATA/Employee_Folders_109_FULL.zip
+DEMO_DATA/*REAL*
+DEMO_DATA/*_FULL.*
+DEMO_DATA/*_109*

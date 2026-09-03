@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hr_enterprise
+      POSTGRES_USER: hr_admin
+      POSTGRES_PASSWORD: change-this-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - hr_postgres_data:/var/lib/postgresql/data
+volumes:
+  hr_postgres_data:

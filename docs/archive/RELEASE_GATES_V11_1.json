@@ -1,0 +1,24 @@
+{
+  "product": "HR Enterprise",
+  "release": "V11.1 Feature Complete Candidate",
+  "goal": "features and correct behavior without overengineering",
+  "automated_in_this_environment": [
+    "Python compilation",
+    "source feature marker acceptance",
+    "package integrity",
+    "release-tree cleanup"
+  ],
+  "must_be_executed_on_windows": [
+    "PyInstaller EXE build",
+    "Inno Setup installer build",
+    "install/uninstall/upgrade smoke test",
+    "tray/autostart runtime test"
+  ],
+  "must_be_executed_against_real_postgresql": [
+    "SQLite to PostgreSQL migration",
+    "application CRUD against PostgreSQL",
+    "6-user concurrency test",
+    "backup/restore verification"
+  ],
+  "do_not_label_complete_until_all_release_gates_pass": true
+}

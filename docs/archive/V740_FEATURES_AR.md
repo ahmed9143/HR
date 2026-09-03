@@ -1,0 +1,17 @@
+# V7.4 قائمة المميزات
+- تشغيل EXE واحد بعد بناء Windows: بدون Python/pip/PowerShell/BAT/Internet للمستخدم النهائي.
+- Server/Client Auto Discovery على LAN.
+- Auto Port Fallback.
+- Error Center + Request ID.
+- System Health + Database Integrity + Storage Check.
+- Network Center + Connected Devices + Latency.
+- Employee 360 + Previous/Next.
+- Evaluation % + Grade + Trend.
+- Advanced Filters + Saved Views + Bulk Operations.
+- Excel Upload + Paste + Mapping + Paste Grid.
+- ZIP + Direct Folder Picker + Clipboard File Paste.
+- Name-first Folder Matching + Missing Documents.
+- Document Versioning + SHA-256.
+- XLSX + CSV + Standalone HTML + PDF Export.
+- RBAC + Scope + Sensitive Data Masking.
+- Logo Manager + Audit Hash Chain + Backup/Restore + Daily Backup.

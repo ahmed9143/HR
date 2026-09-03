@@ -1,0 +1,23 @@
+openpyxl>=3.1
+reportlab>=4.0
+pyinstaller>=6.0
+pywin32>=306; platform_system=="Windows"
+pystray>=0.19.5
+Pillow>=10.0
+
+psycopg[binary]>=3.2
+
+qrcode[pil]>=7.4
+
+# ZKTeco device connector (Phase 2) — OPTIONAL. server.py imports it inside a
+# try/except (see zkteco_connector.py), so the app runs fine without it;
+# only needed on a machine that will actually connect to a real ZKTeco
+# terminal (e.g. iFace 302) to pull attendance.
+pyzk>=0.9
+
+# ACCDB reader for zkteco_accdb_import.py (Phase 3) — OPTIONAL, pure-Python,
+# no MS Access / ODBC driver needed. Only required to read the exported
+# employee-master .accdb file. NOTE: PyPI's access_parser only ever
+# published up to 0.0.6 (there is no 1.x) — pinning >=1.0 makes pip fail
+# with "No matching distribution found". Fixed to the real available range.
+access_parser>=0.0.5
