@@ -1,0 +1,6 @@
+HR Hospital - ZKTeco Complete Release
+Source: HR_Hospital_FULL_OFFLINE_READY(2).zip
+Release scope: unified ZKTeco operations + background sync + attendance processing + hospital HR offline build.
+Default first-run admin: admin / <generated at first run> (forced password change)
+Runtime: Windows EXE/Installer; no Python/pip required on production PC.
+Build: GitHub Actions on Windows.

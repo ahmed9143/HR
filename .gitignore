@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+build/
+dist/
+installer/
+*.spec
+.env
+.venv/
+
+# --- Runtime data: never committed, never shipped in a release --------------
+data/hr_central.db
+data/server_identity.json
+data/logs/*
+data/backups/*
+data/employee_files/*
+data/branding/*
+data/job_results/*
+data/qr/*
+branding/.qr_tokens/
+
+# --- Secrets ----------------------------------------------------------------
+data/INITIAL_ADMIN_PASSWORD.txt
+data/backup.key
+*.pem
+*.key
+
+# --- Real employee PII: never allowed in the repo or in a release -----------
+# Only the sanitized *_Demo.* files under DEMO_DATA are safe (fake data).
+accdb_raw_export.csv
+*_raw_export.csv
+DEMO_DATA/Employees_UPLOAD_READY_109.xlsx
+DEMO_DATA/Employee_Folders_109_FULL.zip
+DEMO_DATA/*REAL*
+DEMO_DATA/*_FULL.*
+DEMO_DATA/*_109*
+
+# --- Build/backup artefacts --------------------------------------------------
+*.bak
+HR_Backup_*.zip

@@ -1,0 +1,3 @@
+# Copy this file to postgres_url.txt on the Network Server PC.
+# Example for the bundled PostgreSQL service:
+postgresql://hr_admin:change-this-password@127.0.0.1:5432/hr_enterprise
