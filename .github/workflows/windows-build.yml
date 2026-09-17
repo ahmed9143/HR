@@ -1,0 +1,275 @@
+name: HR Enterprise Windows Build - v17
+run-name: HR Enterprise Build • ${{ github.ref_name }} • ${{ github.sha }}
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      HR_NO_BROWSER: '1'
+      HR_MODE: 'standalone'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Preflight required assets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'fonts\DejaVuSans.ttf')) { throw 'Missing fonts\DejaVuSans.ttf' }
+          if (-not (Test-Path 'HR_Enterprise.ico')) { throw 'Missing HR_Enterprise.ico' }
+          if (-not (Test-Path 'HR_NETWORK_SERVER.py')) { throw 'Missing HR_NETWORK_SERVER.py' }
+          Write-Host 'BUILD ASSETS: PASS'
+
+      - name: Compile Python tree
+        shell: pwsh
+        run: |
+          $env:PYTHONUTF8='1'
+          python -m compileall -q .
+
+      - name: Clean bytecode caches
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path . -Include '__pycache__' -Recurse -Directory | Remove-Item -Recurse -Force
+          Write-Host 'PYCACHE CLEANUP: PASS'
+
+      - name: Verify offline first-run credentials contract
+        shell: pwsh
+        run: |
+          $s = Get-Content -Raw server.py
+          if ($s -match 'Admin@12345') { throw 'Hardcoded default admin password has regressed back into server.py' }
+          if ($s -notmatch 'HR_BOOTSTRAP_PASSWORD') { throw 'Env-var bootstrap password override contract missing' }
+          if ($s -notmatch 'secrets\.token_urlsafe') { throw 'Random first-run password generation contract missing' }
+          if ($s -notmatch 'must_change_password') { throw 'First-login password change contract missing' }
+          Write-Host 'OFFLINE FIRST-RUN AUTH CONTRACT: PASS'
+
+      - name: Release safety gate
+        shell: pwsh
+        run: |
+          $env:PYTHONUTF8='1'
+          python RELEASE_AUDIT.py
+          if ($LASTEXITCODE -ne 0) { throw 'Release audit failed - see blocking issues above' }
+
+      - name: Route ownership report
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $env:PYTHONUTF8='1'
+          python tests/security/TEST_ROUTE_COLLISIONS.py
+
+      - name: Install Playwright browser
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium
+
+      - name: Regression - full test suite
+        shell: pwsh
+        run: |
+          $env:PYTHONUTF8='1'
+          $env:PYTHONIOENCODING='utf-8'
+          python RUN_ALL_TESTS.py
+
+      - name: Browser E2E (real Chromium)
+        shell: pwsh
+        run: |
+          $env:PYTHONUTF8='1'
+          $env:PYTHONIOENCODING='utf-8'
+          python tests/e2e/TEST_BROWSER_E2E.py
+          if ($LASTEXITCODE -ne 0) { throw 'Browser E2E failed' }
+
+      - name: Upload logs and route map
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics
+          path: |
+            docs/ROUTE_OWNERSHIP.json
+            data/logs/hr.log
+          if-no-files-found: ignore
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: docs/TEST_REPORT.md
+          if-no-files-found: warn
+
+      - name: Regression - startup safety
+        shell: pwsh
+        run: |
+          $env:HR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hr-startup-smoke'
+          python ci\startup_smoke.py
+
+      - name: Enterprise smoke test
+        shell: pwsh
+        run: |
+          $env:HR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hr-enterprise-smoke'
+          python ci\enterprise_smoke.py
+
+      - name: Build Windows EXE
+        shell: cmd
+        run: BUILD_WINDOWS_EXE.bat
+
+      - name: Build network server EXE
+        shell: cmd
+        run: BUILD_NETWORK_EXE.bat
+
+      - name: Smoke test packaged Windows EXE
+        shell: pwsh
+        run: |
+          $env:HR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hr-exe-smoke'
+          $env:HR_NO_BROWSER = '1'
+          $p = Start-Process -FilePath '.\dist\HR Enterprise.exe' -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8899/health' -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'Packaged EXE did not expose /health within 15 seconds' }
+            Write-Host 'PACKAGED EXE SMOKE: PASS'
+          } finally {
+            if ($p -and -not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Smoke test packaged network EXE (loopback, plain HTTP)
+        shell: pwsh
+        run: |
+          # HR_HOST=127.0.0.1 here is loopback, so the auto-TLS policy in
+          # serve_http() does not trigger and the server speaks plain HTTP,
+          # matching the single-user desktop EXE's behaviour.
+          $env:HR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hr-network-exe-smoke'
+          $env:HR_MODE = 'network'
+          $env:HR_HOST = '127.0.0.1'
+          $env:HR_PORT = '8971'
+          $env:HR_PORT_MAX = '8980'
+          $env:HR_NO_BROWSER = '1'
+          $p = Start-Process -FilePath '.\dist\network\HR Enterprise Network Server.exe' -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8971/health' -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'Packaged network EXE did not expose /health within 15 seconds' }
+            Write-Host 'PACKAGED NETWORK EXE SMOKE (loopback/HTTP): PASS'
+          } finally {
+            if ($p -and -not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Smoke test packaged network EXE (LAN-exposed, auto TLS)
+        shell: pwsh
+        run: |
+          # HR_HOST=0.0.0.0 is LAN-exposed with no HR_TLS_CERT/HR_TLS_KEY set,
+          # so serve_http() must auto-generate a self-signed certificate and
+          # speak HTTPS rather than refusing to start or falling back to
+          # plaintext. This is the real-world default for this EXE.
+          $env:HR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hr-network-exe-tls-smoke'
+          $env:HR_MODE = 'network'
+          $env:HR_HOST = '0.0.0.0'
+          $env:HR_PORT = '8981'
+          $env:HR_PORT_MAX = '8990'
+          $env:HR_NO_BROWSER = '1'
+          $p = Start-Process -FilePath '.\dist\network\HR Enterprise Network Server.exe' -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -SkipCertificateCheck -Uri 'https://127.0.0.1:8981/health' -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'Packaged network EXE did not expose HTTPS /health within 15 seconds when LAN-exposed' }
+            $certFile = Join-Path $env:HR_DATA_DIR 'auto_tls_cert.pem'
+            if (-not (Test-Path $certFile)) { throw 'Auto-generated TLS certificate was not written to data/auto_tls_cert.pem' }
+            Write-Host 'PACKAGED NETWORK EXE SMOKE (LAN/auto-TLS): PASS'
+          } finally {
+            if ($p -and -not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build network MSI
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          New-Item -ItemType Directory -Force -Path installer | Out-Null
+          wix build HR_Enterprise_Network.wxs -o "installer\HR Enterprise Network Server.msi"
+
+      - name: Build installer
+        shell: cmd
+        run: BUILD_INSTALLER.bat
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist\HR Enterprise.exe',
+            'dist\network\HR Enterprise Network Server.exe',
+            'installer\HR Enterprise Setup.exe',
+            'installer\HR Enterprise Network Server.msi'
+          )
+          foreach ($p in $required) {
+            if (-not (Test-Path $p)) { throw "Missing artifact: $p" }
+          }
+          Write-Host 'ARTIFACT VERIFICATION: PASS'
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Hospital-Windows-Fully-Offline
+          path: |
+            dist/HR Enterprise.exe
+            dist/network/HR Enterprise Network Server.exe
+            installer/HR Enterprise Setup.exe
+            installer/HR Enterprise Network Server.msi
+            HR_Enterprise.ico
+            BUILD_WINDOWS_EXE.bat
+            BUILD_NETWORK_EXE.bat
+            BUILD_INSTALLER.bat
+            BUILD_NETWORK_MSI.bat
+            HR_Enterprise_Network.wxs
+            docs/NETWORK_POSTGRES_SETUP_AR.md
+            postgres_url.example.txt
+            postgresql/**
+          if-no-files-found: error

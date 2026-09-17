@@ -1,0 +1,72 @@
+{
+  "host": "linux-container",
+  "note": "Measured on Linux with warm cache. Windows will be slower; use for relative scaling, not as an SLA.",
+  "results": [
+    {
+      "employees": 5000,
+      "attendance_rows": 100000,
+      "db_mb": 17.5,
+      "seed_secs": 0.5,
+      "endpoints": {
+        "dashboard": {
+          "n": 15,
+          "p50": 28.8,
+          "p95": 39.5,
+          "p99": 41.1,
+          "max": 41.1
+        },
+        "employee_list": {
+          "n": 15,
+          "p50": 100.8,
+          "p95": 104.1,
+          "p99": 111.0,
+          "max": 111.0
+        },
+        "employee_search": {
+          "n": 15,
+          "p50": 50.0,
+          "p95": 50.8,
+          "p99": 55.2,
+          "max": 55.2
+        },
+        "employee_detail": {
+          "n": 15,
+          "p50": 20.8,
+          "p95": 21.1,
+          "p99": 26.6,
+          "max": 26.6
+        },
+        "operations_page": {
+          "n": 10,
+          "p50": 5.7,
+          "p95": 5.9,
+          "p99": 5.9,
+          "max": 5.9
+        },
+        "health_ready": {
+          "n": 20,
+          "p50": 2.0,
+          "p95": 2.1,
+          "p99": 2.1,
+          "max": 2.1
+        }
+      },
+      "concurrent": {
+        "threads": 8,
+        "requests": 80,
+        "wall_secs": 10.2,
+        "p50": 872.6,
+        "p95": 1222.6,
+        "p99": 1296.2,
+        "errors": 0
+      },
+      "bulk_qr_secs": 91.8,
+      "bulk_qr_status": "done",
+      "sqlite_lock_waits": 0,
+      "sqlite_lock_seconds": 0.0,
+      "slow_requests": 0,
+      "rejected_503": 0,
+      "threads": 7
+    }
+  ]
+}
