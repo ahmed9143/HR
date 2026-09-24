@@ -1,0 +1,19 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="HR Enterprise Network Server" Manufacturer="HR Enterprise" Version="11.2.0" UpgradeCode="6A1A9A3B-9A35-4D80-8A75-3E6C9E6F4D21" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of HR Enterprise Network Server is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="HR Enterprise Network Server" />
+    </StandardDirectory>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="NetworkServerComponent" Guid="*">
+        <File Id="NetworkServerExe" Source="dist\network\HR Enterprise Network Server.exe" KeyPath="yes" />
+        <Shortcut Id="NetworkServerShortcut" Directory="ProgramMenuFolder" Name="HR Enterprise Network Server" WorkingDirectory="INSTALLFOLDER" Target="[NetworkServerExe]" />
+      </Component>
+    </DirectoryRef>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <Feature Id="MainFeature" Title="HR Enterprise Network Server" Level="1">
+      <ComponentRef Id="NetworkServerComponent" />
+    </Feature>
+  </Package>
+</Wix>

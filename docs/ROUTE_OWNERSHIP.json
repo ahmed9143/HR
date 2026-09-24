@@ -1,0 +1,424 @@
+{
+  "routes": {
+    "/id-cards": {
+      "GET": [
+        {
+          "depth": 3,
+          "module": "v13_security_ux",
+          "line": 15,
+          "auth": "employees.view"
+        },
+        {
+          "depth": 10,
+          "module": "enterprise_completion",
+          "line": 800,
+          "auth": ""
+        }
+      ]
+    },
+    "/login": {
+      "GET": [
+        {
+          "depth": 14,
+          "module": "server",
+          "line": 2725,
+          "auth": ""
+        }
+      ],
+      "POST": [
+        {
+          "depth": 13,
+          "module": "server",
+          "line": 2816,
+          "auth": ""
+        }
+      ]
+    },
+    "/logout": {
+      "GET": [
+        {
+          "depth": 14,
+          "module": "server",
+          "line": 2725,
+          "auth": ""
+        }
+      ]
+    },
+    "/password": {
+      "GET": [
+        {
+          "depth": 14,
+          "module": "server",
+          "line": 2725,
+          "auth": ""
+        }
+      ],
+      "POST": [
+        {
+          "depth": 0,
+          "module": "v18_production",
+          "line": 240,
+          "auth": ""
+        },
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 5,
+          "module": "zkteco_ui",
+          "line": 493,
+          "auth": ""
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        },
+        {
+          "depth": 12,
+          "module": "server",
+          "line": 5105,
+          "auth": ""
+        },
+        {
+          "depth": 13,
+          "module": "server",
+          "line": 2816,
+          "auth": ""
+        }
+      ]
+    },
+    "/qr/scan": {
+      "GET": [
+        {
+          "depth": 10,
+          "module": "enterprise_completion",
+          "line": 800,
+          "auth": ""
+        }
+      ]
+    },
+    "/employee/operations": {
+      "GET": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 813,
+          "auth": "employees.view"
+        },
+        {
+          "depth": 7,
+          "module": "production_ops",
+          "line": 242,
+          "auth": ""
+        }
+      ]
+    },
+    "/employee/operations/qr": {
+      "GET": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 813,
+          "auth": "employees.view"
+        }
+      ],
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        }
+      ]
+    },
+    "/employee/operations/export": {
+      "GET": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 813,
+          "auth": "employees.view"
+        }
+      ],
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        }
+      ]
+    },
+    "/employee/operations/provision": {
+      "GET": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 813,
+          "auth": "employees.view"
+        }
+      ],
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        }
+      ]
+    },
+    "/zkteco/devices": {
+      "GET": [
+        {
+          "depth": 5,
+          "module": "zkteco_ui",
+          "line": 471,
+          "auth": ""
+        }
+      ]
+    },
+    "/zkteco/sync": {
+      "GET": [
+        {
+          "depth": 5,
+          "module": "zkteco_ui",
+          "line": 471,
+          "auth": ""
+        }
+      ]
+    },
+    "/health": {
+      "GET": [
+        {
+          "depth": 14,
+          "module": "server",
+          "line": 2725,
+          "auth": ""
+        }
+      ]
+    },
+    "/health/deep": {
+      "GET": [
+        {
+          "depth": 14,
+          "module": "server",
+          "line": 2725,
+          "auth": ""
+        }
+      ]
+    },
+    "/qr/generate": {
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 3,
+          "module": "v13_security_ux",
+          "line": 65,
+          "auth": "employees.edit,role:admin"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        },
+        {
+          "depth": 9,
+          "module": "enterprise_completion",
+          "line": 824,
+          "auth": "qr.bulk_generate"
+        }
+      ]
+    },
+    "/qr/regenerate": {
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 3,
+          "module": "v13_security_ux",
+          "line": 65,
+          "auth": "employees.edit,role:admin"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        },
+        {
+          "depth": 9,
+          "module": "enterprise_completion",
+          "line": 824,
+          "auth": "qr.bulk_generate"
+        }
+      ]
+    },
+    "/qr/generate-all": {
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 3,
+          "module": "v13_security_ux",
+          "line": 65,
+          "auth": "employees.edit,role:admin"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        },
+        {
+          "depth": 9,
+          "module": "enterprise_completion",
+          "line": 824,
+          "auth": "qr.bulk_generate"
+        }
+      ]
+    },
+    "/qr/bulk": {
+      "POST": [
+        {
+          "depth": 1,
+          "module": "stable_final",
+          "line": 862,
+          "auth": "qr.bulk_generate"
+        },
+        {
+          "depth": 6,
+          "module": "production_ops",
+          "line": 247,
+          "auth": "employees.edit,qr.bulk_generate,users.manage"
+        },
+        {
+          "depth": 7,
+          "module": "v12_enterprise",
+          "line": 473,
+          "auth": ""
+        }
+      ]
+    }
+  },
+  "shadowed_auth": [
+    {
+      "path": "/password",
+      "verb": "POST",
+      "winner": "v18_production:240",
+      "winner_auth": "",
+      "shadowed": "stable_final:862",
+      "shadowed_auth": "qr.bulk_generate"
+    },
+    {
+      "path": "/password",
+      "verb": "POST",
+      "winner": "v18_production:240",
+      "winner_auth": "",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/qr/generate",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "v13_security_ux:65",
+      "shadowed_auth": "employees.edit,role:admin"
+    },
+    {
+      "path": "/qr/generate",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/qr/regenerate",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "v13_security_ux:65",
+      "shadowed_auth": "employees.edit,role:admin"
+    },
+    {
+      "path": "/qr/regenerate",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/qr/generate-all",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "v13_security_ux:65",
+      "shadowed_auth": "employees.edit,role:admin"
+    },
+    {
+      "path": "/qr/generate-all",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/qr/bulk",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/employee/operations/qr",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    },
+    {
+      "path": "/employee/operations/provision",
+      "verb": "POST",
+      "winner": "stable_final:862",
+      "winner_auth": "qr.bulk_generate",
+      "shadowed": "production_ops:247",
+      "shadowed_auth": "employees.edit,qr.bulk_generate,users.manage"
+    }
+  ]
+}

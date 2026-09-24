@@ -1,0 +1,59 @@
+# HR Enterprise V8.0 — Hardening Edition
+
+## التشغيل للمستخدم النهائي
+1. ابنِ EXE مرة واحدة على جهاز البناء باستخدام `BUILD_WINDOWS_EXE.bat`.
+2. انسخ `HREnterpriseV80.exe` إلى كل جهاز Windows.
+3. المستخدم يضغط مرتين فقط على EXE. لا Python ولا pip ولا PowerShell ولا Internet مطلوبة.
+
+## الشبكة المحلية
+- أول جهاز يبدأ ولا يجد خادمًا موجودًا يصبح الخادم بعد Election آمن ضد بدء جهازين معًا.
+- الأجهزة الأخرى تكتشف الخادم عبر LAN UDP Discovery.
+- إذا كان 8899 مشغولًا يتم اختيار منفذ تلقائيًا حتى 8920.
+- بيانات الخادم تحفظ في Windows `C:\ProgramData\HR Enterprise\Data`، وليس بجوار EXE.
+- كل جهاز عميل يحفظ بصمة الخادم التي وثقها أول مرة، وأي تغيير في البصمة يظهر كتحذير بدل الاتصال الصامت.
+
+## مهم بخصوص الإنترنت
+البرنامج لا يحتاج Internet. تعدد الأجهزة يحتاج LAN/Wi-Fi مشتركة بين الأجهزة والخادم.
+
+## البيانات
+- SQLite WAL
+- ملفات الموظفين خارج قاعدة البيانات
+- SHA-256 للمستندات
+- Backup ZIP مع manifest وفحص checksums
+- Audit Hash Chain
+- Session revocation / live permission refresh
+
+## Import
+- Excel / CSV
+- Paste Grid
+- ZIP لمجلدات الموظفين
+- Folder Picker مباشر
+- Clipboard file paste من المتصفح
+- Native Windows Explorer clipboard bridge داخل EXE إذا كان pywin32 متاحًا في البناء
+- Name-first matching مع مراجعة للحالات غير الآمنة
+
+## Export
+XLSX + CSV + Standalone HTML + PDF. HTML ملف مستقل ولا يعيد توجيه المستخدم إلى HTTP.
+
+## Diagnostics
+المستخدم يرى Request ID عند الخطأ. المسؤول يرى `/diagnostics/errors`.
+`/health` العام يعرض أقل قدر من المعلومات، أما التفاصيل فتحتاج صلاحية داخل `/system/health.json`.
+
+## الحساب الافتراضي
+`admin / <HR_BOOTSTRAP_PASSWORD>` في أول تشغيل، ويجب تغيير كلمة المرور فورًا.
+
+
+## V8.0 Enterprise Ultimate — إضافات رئيسية
+- Daily Late Limit Ledger: حد يومي ثابت + مستخدم + متبقي + تجاوز، مع حفظ مستقل يمنع فقدان الحد.
+- Holiday Calendar.
+- Enterprise Center للمستندات والاعتمادات والتدريب والأصول والموافقات.
+- Live access validation عند كل طلب حساس.
+- SQL scope filtering للحضور بدل جلب 1000 سجل ثم التصفية في Python.
+- Database indexes للـAttendance/Leaves/Documents/Payroll/Audit والتنبيهات.
+- File signature validation للملفات المرفوعة.
+- Payroll lock server-side.
+- Leave/Overtime approval scope enforcement.
+- Public health محدود، والتفاصيل في System Health بعد تسجيل الدخول.
+
+### ملاحظة أمنية
+الـLAN الافتراضي ما زال HTTP لتسهيل التشغيل الداخلي. للبيئات الحساسة يمكن تشغيل Reverse Proxy/HTTPS أو تزويد الخادم بشهادة TLS محلية قبل التوزيع الإنتاجي.

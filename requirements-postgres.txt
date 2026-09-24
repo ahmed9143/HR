@@ -1,0 +1,4 @@
+# EXPERIMENTAL PostgreSQL extra — NOT production-supported.
+# Read docs/POSTGRES_STATUS.md first. Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-postgres.txt
+psycopg[binary]>=3.2

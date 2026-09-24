@@ -1,0 +1,235 @@
+# =============================================================================
+# HR Enterprise — test, build and release
+#
+#   push / pull request  -> tests on Linux AND Windows, then a Windows build
+#   tag  v17.0.1         -> the same, plus a GitHub Release with the installer
+#   manual               -> Actions tab -> "Run workflow"
+#
+# Output artifacts (downloadable from the run page):
+#   HR-Enterprise-Setup-<version>.exe   Windows installer
+#   HR-Enterprise-Portable-<version>.zip  unzip-and-run build
+#   SHA256SUMS.txt
+#
+# The Windows test job is the first time this suite runs on the platform the
+# product actually ships on — including the NTFS ACL (icacls) path, which
+# cannot be exercised on Linux.
+# =============================================================================
+name: HR Enterprise — Test, Build, Release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: 'utf-8'
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  release-audit:
+    name: Release safety audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: No PII, databases, keys or bytecode in the tree
+        run: python RELEASE_AUDIT.py
+      - name: Version is consistent
+        shell: bash
+        run: |
+          v=$(tr -d '[:space:]' < VERSION.txt)
+          grep -q "APP_VERSION='${v}'" server.py || { echo "server.py APP_VERSION != VERSION.txt ($v)"; exit 1; }
+          echo "version ${v} consistent"
+      - name: Every source file compiles
+        run: python -m compileall -q -x "(vendor|tests)" .
+
+  # ---------------------------------------------------------------------------
+  test-linux:
+    name: Tests (Linux)
+    needs: release-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+      - name: Full test suite (unit, integration, security, stress, DR, E2E, load gate)
+        run: python RUN_ALL_TESTS.py
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-linux
+          path: docs/TEST_REPORT.md
+
+  # ---------------------------------------------------------------------------
+  test-windows:
+    name: Tests (Windows)
+    needs: release-audit
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt playwright
+          python -m playwright install chromium
+      - name: Full test suite on Windows
+        run: python RUN_ALL_TESTS.py
+      - name: NTFS ACL is really applied to secret files
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'acl-check'
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          $env:HR_DATA_DIR = $d
+          python -c "import sys; sys.path.insert(0,'.'); import server as S; S.backup_key(); S.app_secret_key(); print('keys generated')"
+          foreach ($f in @('backup.key','secret.key')) {
+            $acl = (icacls (Join-Path $d $f)) -join "`n"
+            Write-Host $acl
+            if ($acl -match 'Everyone|BUILTIN\\Users|Authenticated Users') {
+              throw "$f is readable by a broad group - ACL was not applied"
+            }
+          }
+          Write-Host 'ACL check passed'
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-windows
+          path: docs/TEST_REPORT.md
+
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build Windows application
+    needs: [test-linux, test-windows]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag matches VERSION.txt
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          [ "$tag" = "${{ steps.ver.outputs.version }}" ] || { echo "tag v$tag != VERSION.txt ${{ steps.ver.outputs.version }}"; exit 1; }
+
+      - name: Windows version resource
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $p = ($v -split '[^0-9]') | Where-Object { $_ -ne '' } | Select-Object -First 4
+          while ($p.Count -lt 4) { $p += '0' }
+          $t = ($p -join ', ')
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          @"
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers=($t), prodvers=($t), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[StringFileInfo([StringTable('040904B0', [
+              StringStruct('CompanyName', 'HR Enterprise'),
+              StringStruct('FileDescription', 'HR Enterprise'),
+              StringStruct('FileVersion', '$v'),
+              StringStruct('ProductName', 'HR Enterprise'),
+              StringStruct('ProductVersion', '$v')])]),
+              VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+          )
+          "@ | Set-Content -Encoding UTF8 build/version_info.txt
+
+      - name: PyInstaller
+        run: python -m PyInstaller --noconfirm --clean HR_Enterprise.spec
+
+      - name: Smoke-test the packaged application
+        run: python tests/packaging/TEST_FROZEN_APP.py "dist/HR Enterprise/HR Enterprise.exe"
+
+      - name: Verify end-user bundle is self-contained
+        shell: pwsh
+        run: |
+          $root = Resolve-Path "dist/HR Enterprise"
+          $forbidden = Get-ChildItem $root -Recurse -File | Where-Object { $_.Name -in @('python.exe','python3.exe','pip.exe','pip3.exe','npm.cmd','node.exe') }
+          if ($forbidden) { $forbidden | Format-Table FullName; throw "Runtime bundle unexpectedly contains a developer/package manager executable" }
+          $secrets = Get-ChildItem $root -Recurse -File | Where-Object { $_.Name -match '^(backup\.key|secret\.key|.*\.db)$' }
+          if ($secrets) { $secrets | Format-Table FullName; throw "Build contains runtime data/secrets" }
+          Write-Host "Self-contained offline runtime check passed"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" HR_Enterprise.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      - name: Portable zip and checksums
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          Compress-Archive -Path "dist/HR Enterprise/*" -DestinationPath "installer/HR-Enterprise-Portable-$v.zip" -Force
+          Get-ChildItem installer -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii installer/SHA256SUMS.txt
+          Get-Content installer/SHA256SUMS.txt
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: HR-Enterprise-${{ steps.ver.outputs.version }}
+          path: installer/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HR Enterprise ${{ steps.ver.outputs.version }}
+          files: installer/*
+          body: |
+            ## HR Enterprise ${{ steps.ver.outputs.version }}
+
+            **Install:** run `HR-Enterprise-Setup-${{ steps.ver.outputs.version }}.exe`.
+
+            **First login:** `admin` / `Admin@12345` — you are forced to change it immediately.
+
+            Data lives in `C:\ProgramData\HR Enterprise\Data` and is kept across upgrades and uninstalls.
+            Back up `backup.key` and `secret.key` from that folder to offline media.

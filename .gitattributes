@@ -1,0 +1,20 @@
+# Windows scripts must keep CRLF: cmd.exe mis-parses labels and `goto` in a
+# .bat file with Unix line endings, and Inno Setup expects CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.iss   text eol=crlf
+*.ps1   text eol=crlf
+
+# Everything else: normalise to LF in the repository.
+*.py    text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.spec  text eol=lf
+
+*.png   binary
+*.ico   binary
+*.ttf   binary
+*.xlsx  binary
+*.zip   binary
